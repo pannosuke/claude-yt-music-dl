@@ -173,16 +173,28 @@
             <form id="scanForm">
                 <div class="form-group">
                     <label for="musicPath">Music Library Path *</label>
+                    <div style="display: flex; gap: 10px;">
+                        <input
+                            type="text"
+                            id="musicPath"
+                            name="musicPath"
+                            value=""
+                            placeholder="/path/to/music/library"
+                            required
+                            style="flex: 1;"
+                        >
+                        <button type="button" id="browseBtn" style="width: auto; padding: 12px 24px;">Browse...</button>
+                    </div>
                     <input
-                        type="text"
-                        id="musicPath"
-                        name="musicPath"
-                        value=""
-                        placeholder="/path/to/music/library"
-                        required
+                        type="file"
+                        id="directoryPicker"
+                        webkitdirectory
+                        directory
+                        multiple
+                        style="display: none;"
                     >
                     <small style="color: #666; font-size: 12px; display: block; margin-top: 5px;">
-                        Enter the full path to your music library root folder
+                        Enter the full path to your music library root folder or click Browse
                     </small>
                 </div>
 

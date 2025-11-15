@@ -11,6 +11,8 @@ let selectedGroups = new Set();
 const organizerElements = {
     form: null,
     scanBtn: null,
+    browseBtn: null,
+    directoryPicker: null,
     musicPathInput: null,
     progressContainer: null,
     progressBar: null,
@@ -24,7 +26,7 @@ const organizerElements = {
     summaryArtists: null,
     summaryAlbums: null,
     issuesBreakdown: null,
-    issuesList: null,
+    issuesListEl: null,
     formatList: null,
     groupGrid: null
 };
@@ -36,6 +38,8 @@ function initOrganizer() {
     // Cache DOM elements
     organizerElements.form = document.getElementById('scanForm');
     organizerElements.scanBtn = document.getElementById('scanBtn');
+    organizerElements.browseBtn = document.getElementById('browseBtn');
+    organizerElements.directoryPicker = document.getElementById('directoryPicker');
     organizerElements.musicPathInput = document.getElementById('musicPath');
     organizerElements.progressContainer = document.getElementById('scanProgressContainer');
     organizerElements.progressBar = document.getElementById('scanProgressBar');
@@ -49,7 +53,7 @@ function initOrganizer() {
     organizerElements.summaryArtists = document.getElementById('summaryArtists');
     organizerElements.summaryAlbums = document.getElementById('summaryAlbums');
     organizerElements.issuesBreakdown = document.getElementById('issuesBreakdown');
-    organizerElements.issuesList = document.getElementById('issuesList');
+    organizerElements.issuesListEl = document.getElementById('issuesList');
     organizerElements.formatList = document.getElementById('formatList');
     organizerElements.groupGrid = document.getElementById('groupGrid');
 
@@ -59,6 +63,8 @@ function initOrganizer() {
     // Setup event listeners
     organizerElements.form.addEventListener('submit', handleScanSubmit);
     organizerElements.newScanBtn.addEventListener('click', resetScan);
+    organizerElements.browseBtn.addEventListener('click', handleBrowseClick);
+    organizerElements.directoryPicker.addEventListener('change', handleDirectorySelect);
 
     // Show the module
     const module = document.getElementById('module-organizer');
@@ -155,7 +161,7 @@ function displayScanResults(data) {
                 </div>
             `;
         }
-        organizerElements.issuesList.innerHTML = issuesHTML;
+        organizerElements.issuesListEl.innerHTML = issuesHTML;
     }
 
     // Display format distribution
@@ -215,6 +221,52 @@ function displayArtistGroups(groupedByArtist) {
             }
         });
     });
+}
+
+/**
+ * Handle browse button click
+ */
+function handleBrowseClick() {
+    organizerElements.directoryPicker.click();
+}
+
+/**
+ * Handle directory selection from file picker
+ */
+function handleDirectorySelect(event) {
+    const files = event.target.files;
+    if (files && files.length > 0) {
+        // Get the path from the first file
+        // The webkitRelativePath will be in format: folderName/subfolder/file
+        // We want to extract just the root folder path
+        const firstFile = files[0];
+
+        if (firstFile.webkitRelativePath) {
+            // Extract the directory path
+            // For file: "Music/Artist/Album/track.mp3"
+            // webkitRelativePath gives us: "Music/Artist/Album/track.mp3"
+            // We need to get the full system path
+
+            // Note: Browsers don't expose the full system path for security reasons
+            // We can only get the relative path from the selected folder
+            // The user will need to know their full path or we show a helpful message
+
+            const folderName = firstFile.webkitRelativePath.split('/')[0];
+
+            // Show a helpful dialog
+            const fullPath = prompt(
+                `Browser selected folder: "${folderName}"\n\n` +
+                `Please enter the FULL path to this folder:\n` +
+                `(e.g., /Users/yourname/Music/${folderName})`,
+                ''
+            );
+
+            if (fullPath) {
+                organizerElements.musicPathInput.value = fullPath;
+                savePath(fullPath);
+            }
+        }
+    }
 }
 
 /**
