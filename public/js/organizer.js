@@ -11,8 +11,6 @@ let selectedGroups = new Set();
 const organizerElements = {
     form: null,
     scanBtn: null,
-    browseBtn: null,
-    directoryPicker: null,
     musicPathInput: null,
     progressContainer: null,
     progressBar: null,
@@ -38,8 +36,6 @@ function initOrganizer() {
     // Cache DOM elements
     organizerElements.form = document.getElementById('scanForm');
     organizerElements.scanBtn = document.getElementById('scanBtn');
-    organizerElements.browseBtn = document.getElementById('browseBtn');
-    organizerElements.directoryPicker = document.getElementById('directoryPicker');
     organizerElements.musicPathInput = document.getElementById('musicPath');
     organizerElements.progressContainer = document.getElementById('scanProgressContainer');
     organizerElements.progressBar = document.getElementById('scanProgressBar');
@@ -63,8 +59,9 @@ function initOrganizer() {
     // Setup event listeners
     organizerElements.form.addEventListener('submit', handleScanSubmit);
     organizerElements.newScanBtn.addEventListener('click', resetScan);
-    organizerElements.browseBtn.addEventListener('click', handleBrowseClick);
-    organizerElements.directoryPicker.addEventListener('change', handleDirectorySelect);
+
+    // Add drag and drop support for folders
+    setupDragAndDrop();
 
     // Show the module
     const module = document.getElementById('module-organizer');
@@ -224,49 +221,70 @@ function displayArtistGroups(groupedByArtist) {
 }
 
 /**
- * Handle browse button click
+ * Setup drag and drop support for the music path input
  */
-function handleBrowseClick() {
-    organizerElements.directoryPicker.click();
-}
+function setupDragAndDrop() {
+    const input = organizerElements.musicPathInput;
 
-/**
- * Handle directory selection from file picker
- */
-function handleDirectorySelect(event) {
-    const files = event.target.files;
-    if (files && files.length > 0) {
-        // Get the path from the first file
-        // The webkitRelativePath will be in format: folderName/subfolder/file
-        // We want to extract just the root folder path
-        const firstFile = files[0];
+    // Prevent default drag behaviors
+    ['dragenter', 'dragover', 'dragleave', 'drop'].forEach(eventName => {
+        input.addEventListener(eventName, preventDefaults, false);
+    });
 
-        if (firstFile.webkitRelativePath) {
-            // Extract the directory path
-            // For file: "Music/Artist/Album/track.mp3"
-            // webkitRelativePath gives us: "Music/Artist/Album/track.mp3"
-            // We need to get the full system path
+    function preventDefaults(e) {
+        e.preventDefault();
+        e.stopPropagation();
+    }
 
-            // Note: Browsers don't expose the full system path for security reasons
-            // We can only get the relative path from the selected folder
-            // The user will need to know their full path or we show a helpful message
+    // Highlight input when item is dragged over it
+    ['dragenter', 'dragover'].forEach(eventName => {
+        input.addEventListener(eventName, () => {
+            input.style.borderColor = '#667eea';
+            input.style.backgroundColor = '#f0f4ff';
+        }, false);
+    });
 
-            const folderName = firstFile.webkitRelativePath.split('/')[0];
+    ['dragleave', 'drop'].forEach(eventName => {
+        input.addEventListener(eventName, () => {
+            input.style.borderColor = '#e1e8ed';
+            input.style.backgroundColor = 'white';
+        }, false);
+    });
 
-            // Show a helpful dialog
-            const fullPath = prompt(
-                `Browser selected folder: "${folderName}"\n\n` +
-                `Please enter the FULL path to this folder:\n` +
-                `(e.g., /Users/yourname/Music/${folderName})`,
-                ''
-            );
+    // Handle dropped files/folders
+    input.addEventListener('drop', (e) => {
+        const dt = e.dataTransfer;
+        const items = dt.items;
 
-            if (fullPath) {
-                organizerElements.musicPathInput.value = fullPath;
-                savePath(fullPath);
+        if (items) {
+            // Loop through items to find directories
+            for (let i = 0; i < items.length; i++) {
+                const item = items[i];
+                if (item.kind === 'file') {
+                    const entry = item.webkitGetAsEntry();
+                    if (entry && entry.isDirectory) {
+                        // Get the full path from the dropped item
+                        // Note: entry.fullPath gives us the relative path only
+                        // We need to ask the user for the full system path
+                        const folderName = entry.name;
+
+                        const fullPath = prompt(
+                            `You dropped the folder: "${folderName}"\n\n` +
+                            `Please enter the FULL path to this folder:\n` +
+                            `(e.g., /Users/yourname/Music/${folderName} or C:\\Users\\yourname\\Music\\${folderName})`,
+                            ''
+                        );
+
+                        if (fullPath) {
+                            input.value = fullPath;
+                            savePath(fullPath);
+                        }
+                        break;
+                    }
+                }
             }
         }
-    }
+    }, false);
 }
 
 /**
