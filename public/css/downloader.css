@@ -1,0 +1,161 @@
+/* Downloader module specific styles */
+
+/* Statistics Dashboard */
+.stats-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+    gap: 15px;
+    margin-bottom: 20px;
+}
+
+.stat-card {
+    background: #f7f9fc;
+    border-radius: 8px;
+    padding: 15px;
+    border: 2px solid #e1e8ed;
+    transition: transform 0.2s, box-shadow 0.2s;
+}
+
+.stat-card:hover {
+    transform: translateY(-2px);
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1);
+}
+
+.stat-card .label {
+    font-size: 11px;
+    color: #666;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    margin-bottom: 5px;
+}
+
+.stat-card .value {
+    font-size: 28px;
+    font-weight: bold;
+    color: #333;
+}
+
+.stat-card.total .value { color: #667eea; }
+.stat-card.completed .value { color: #27ae60; }
+.stat-card.remaining .value { color: #f39c12; }
+.stat-card.failed .value { color: #e74c3c; }
+
+/* Current Track Card */
+.current-track-card {
+    background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+    color: white;
+    border-radius: 8px;
+    padding: 20px;
+    margin-bottom: 20px;
+}
+
+.current-track-card h3 {
+    margin: 0 0 15px 0;
+    font-size: 14px;
+    opacity: 0.9;
+    text-transform: uppercase;
+    letter-spacing: 1px;
+}
+
+.track-info {
+    margin-bottom: 15px;
+}
+
+.track-info-row {
+    margin-bottom: 8px;
+    font-size: 14px;
+}
+
+.track-info-label {
+    opacity: 0.8;
+    margin-right: 8px;
+}
+
+.track-info-value {
+    font-weight: 600;
+}
+
+.track-title {
+    font-size: 18px;
+    font-weight: bold;
+    margin-top: 5px;
+}
+
+.format-badge {
+    display: inline-block;
+    background: rgba(255, 255, 255, 0.2);
+    padding: 4px 12px;
+    border-radius: 12px;
+    font-size: 11px;
+    font-weight: 600;
+    letter-spacing: 0.5px;
+}
+
+.file-progress-bar-bg {
+    background: rgba(255, 255, 255, 0.2);
+    height: 6px;
+    border-radius: 3px;
+    overflow: hidden;
+    margin-top: 10px;
+}
+
+.file-progress-bar {
+    height: 100%;
+    background: white;
+    width: 0%;
+    transition: width 0.3s ease;
+}
+
+/* Overall Progress Section */
+.overall-progress-section {
+    margin-bottom: 20px;
+}
+
+.overall-progress-section h3 {
+    font-size: 14px;
+    color: #333;
+    margin-bottom: 10px;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+}
+
+/* Errors Panel */
+.errors-panel {
+    background: #fff3cd;
+    border-left: 4px solid #f39c12;
+    border-radius: 4px;
+    padding: 15px;
+    margin-bottom: 20px;
+    display: none;
+}
+
+.errors-panel.has-errors {
+    display: block;
+}
+
+.errors-panel h4 {
+    margin: 0 0 10px 0;
+    font-size: 13px;
+    color: #856404;
+    cursor: pointer;
+    user-select: none;
+}
+
+.errors-panel h4:hover {
+    text-decoration: underline;
+}
+
+.error-list {
+    font-size: 12px;
+    color: #856404;
+    margin: 5px 0;
+}
+
+.error-list-item {
+    padding: 5px 0;
+    border-bottom: 1px solid #ffeeba;
+}
+
+.error-list-item:last-child {
+    border-bottom: none;
+}
