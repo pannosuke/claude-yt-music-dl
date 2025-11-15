@@ -127,11 +127,9 @@ app.post('/api/download', upload.single('cookies'), async (req, res) => {
       '-x',  // Extract audio only
       '--audio-format', 'flac',  // Convert to FLAC
       '--audio-quality', '0',  // Best quality (0-9, 0 is best)
-      '--output', path.join(outputPath, '%(artist)s/%(album)s/%(track_number)s - %(title)s.%(ext)s'),
+      '--output', path.join(outputPath, '%(artist)s/%(album)s/%(title)s.%(ext)s'),
       '--add-metadata',  // Add metadata from video
       '--embed-thumbnail',  // Embed thumbnail as artwork
-      '--parse-metadata', 'title:%(track)s',
-      '--parse-metadata', 'playlist_index:%(track_number)s',
       '--yes-playlist',  // Explicitly download whole playlist
       '--ignore-errors',  // Continue on download errors
       '--no-warnings',  // Reduce output noise
