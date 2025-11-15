@@ -160,6 +160,14 @@ app.post('/api/download', upload.single('cookies'), async (req, res) => {
     const ytdlp = spawn('yt-dlp', args);
     activeDownloads.set(downloadId, ytdlp);
 
+    // Enhanced tracking variables for status dashboard
+    let totalTracks = 0;
+    let currentTrack = 0;
+    let completedTracks = 0;
+    let failedTracks = [];
+    let unavailableVideos = [];
+    let skippedTracks = 0;
+    let currentTrackInfo = { artist: '', album: '', title: '' };
     let currentFile = '';
     let downloadedCount = 0;
 
@@ -172,34 +180,103 @@ app.post('/api/download', upload.single('cookies'), async (req, res) => {
         sendProgress({ rawOutput: output.trim() });
       }
 
-      // Parse download progress
-      if (output.includes('[download]')) {
-        const percentMatch = output.match(/(\d+\.?\d*)%/);
-        if (percentMatch) {
-          const percent = parseFloat(percentMatch[1]);
-          sendProgress({
-            status: `Downloading: ${currentFile}`,
-            progress: Math.min(percent, 99),
-            currentFile
-          });
-        }
+      // 1. Extract total tracks from playlist
+      const playlistMatch = output.match(/\[youtube:tab\] Playlist [^:]+: Downloading (\d+) items of (\d+)/);
+      if (playlistMatch) {
+        totalTracks = parseInt(playlistMatch[2]);
+        sendProgress({
+          totalTracks,
+          status: `Found ${totalTracks} tracks in playlist`,
+          progress: 5
+        });
+      }
 
-        if (output.includes('Destination:')) {
-          const fileMatch = output.match(/Destination: (.+)/);
-          if (fileMatch) {
-            currentFile = path.basename(fileMatch[1]);
-            log(`Downloading file: ${currentFile}`, 'INFO');
+      // 2. Track current item being downloaded
+      const itemMatch = output.match(/\[download\] Downloading item (\d+) of (\d+)/);
+      if (itemMatch) {
+        currentTrack = parseInt(itemMatch[1]);
+        totalTracks = parseInt(itemMatch[2]);
+        const remaining = totalTracks - currentTrack;
+        sendProgress({
+          currentTrack,
+          totalTracks,
+          remaining,
+          status: `Downloading track ${currentTrack} of ${totalTracks}`
+        });
+      }
+
+      // 3. Extract track title from metadata parser
+      const trackTitleMatch = output.match(/\[MetadataParser\] Parsed track from '%\(title\)s': '(.+)'/);
+      if (trackTitleMatch) {
+        currentTrackInfo.title = trackTitleMatch[1];
+      }
+
+      // 4. Extract artist and album from destination path
+      if (output.includes('[download] Destination:')) {
+        const fileMatch = output.match(/\[download\] Destination: (.+)/);
+        if (fileMatch) {
+          currentFile = path.basename(fileMatch[1]);
+          log(`Downloading file: ${currentFile}`, 'INFO');
+
+          // Try to extract artist/album from path: /path/to/Artist/Album/file.ext
+          const pathMatch = fileMatch[1].match(/\/([^\/]+)\/([^\/]+)\/[^\/]+$/);
+          if (pathMatch) {
+            currentTrackInfo.artist = pathMatch[1];
+            currentTrackInfo.album = pathMatch[2];
+            log(`Extracted artist: ${currentTrackInfo.artist}, album: ${currentTrackInfo.album}`, 'DEBUG');
+            sendProgress({
+              currentTrackInfo: {...currentTrackInfo},
+              status: `Downloading: ${currentTrackInfo.artist} - ${currentTrackInfo.title || currentFile}`
+            });
           }
         }
       }
 
-      if (output.includes('[ExtractAudio]') || output.includes('has already been downloaded')) {
-        downloadedCount++;
-        log(`Processed track ${downloadedCount}`, 'INFO');
+      // 5. Parse download progress percentages
+      if (output.includes('[download]') && output.includes('%')) {
+        const percentMatch = output.match(/(\d+\.?\d*)%/);
+        if (percentMatch) {
+          const percent = parseFloat(percentMatch[1]);
+          sendProgress({
+            downloadProgress: percent,
+            status: `Downloading: ${currentTrackInfo.title || currentFile} (${percent.toFixed(1)}%)`,
+            progress: totalTracks > 0 ? Math.min(Math.round((completedTracks / totalTracks) * 100), 99) : Math.min(percent, 99)
+          });
+        }
+      }
+
+      // 6. Track completed tracks (audio extraction)
+      if (output.includes('[ExtractAudio]')) {
+        completedTracks++;
+        downloadedCount++; // Keep for compatibility
+        const extractMatch = output.match(/\[ExtractAudio\] Destination: (.+)/);
+        if (extractMatch) {
+          const fileName = path.basename(extractMatch[1]);
+          const progressPercent = totalTracks > 0 ? Math.round((completedTracks / totalTracks) * 100) : 50;
+          log(`Processed track ${completedTracks}`, 'INFO');
+          sendProgress({
+            completedTracks,
+            downloadedCount: completedTracks,
+            lastCompleted: fileName,
+            format: 'FLAC',
+            status: `Completed ${completedTracks}${totalTracks > 0 ? ` of ${totalTracks}` : ''} track(s)`,
+            progress: Math.min(progressPercent, 99)
+          });
+        }
+      }
+
+      // 7. Track skipped tracks (already downloaded)
+      if (output.includes('has already been downloaded')) {
+        skippedTracks++;
+        completedTracks++; // Count as completed
+        downloadedCount++; // Keep for compatibility
+        const progressPercent = totalTracks > 0 ? Math.round((completedTracks / totalTracks) * 100) : 50;
         sendProgress({
-          status: `Processed ${downloadedCount} track(s)`,
-          progress: 50,
-          downloadedCount
+          skippedTracks,
+          completedTracks,
+          downloadedCount: completedTracks,
+          status: `Skipped ${skippedTracks} already downloaded track(s)`,
+          progress: Math.min(progressPercent, 99)
         });
       }
     });
@@ -213,11 +290,54 @@ app.post('/api/download', upload.single('cookies'), async (req, res) => {
         sendProgress({ rawOutput: `[stderr] ${output.trim()}` });
       }
 
-      // Send warnings and errors
-      if (output.includes('ERROR')) {
+      // 8. Track unavailable videos count
+      const unavailableMatch = output.match(/(\d+) unavailable videos? (?:is|are) hidden/);
+      if (unavailableMatch) {
+        const unavailableCount = parseInt(unavailableMatch[1]);
+        sendProgress({
+          unavailableCount,
+          warning: `${unavailableCount} unavailable video(s) in playlist`
+        });
+      }
+
+      // 9. Track individual errors
+      if (output.includes('ERROR:')) {
+        let errorType = 'unknown';
+        let errorMessage = output.trim();
+
+        // Classify error types
+        if (output.includes('Video unavailable')) {
+          errorType = 'unavailable';
+          const videoIdMatch = output.match(/\[youtube\] ([^:]+):/);
+          if (videoIdMatch) {
+            const videoId = videoIdMatch[1];
+            unavailableVideos.push({
+              videoId,
+              message: errorMessage
+            });
+          }
+        } else if (output.includes('Private video')) {
+          errorType = 'private';
+        } else if (output.includes('removed by the uploader')) {
+          errorType = 'removed';
+        } else if (output.includes('403: Forbidden')) {
+          errorType = 'forbidden';
+        }
+
+        failedTracks.push({
+          type: errorType,
+          message: errorMessage,
+          timestamp: new Date().toISOString()
+        });
+
         log(`yt-dlp error: ${output}`, 'ERROR');
-        sendProgress({ error: output.trim() });
-      } else if (output.includes('WARNING')) {
+        sendProgress({
+          error: errorMessage,
+          failedCount: failedTracks.length,
+          failedTracks: failedTracks,
+          unavailableVideos: unavailableVideos.map(v => v.videoId)
+        });
+      } else if (output.includes('WARNING:')) {
         log(`yt-dlp warning: ${output}`, 'WARN');
         sendProgress({ warning: output.trim() });
       }
@@ -228,12 +348,19 @@ app.post('/api/download', upload.single('cookies'), async (req, res) => {
       activeDownloads.delete(downloadId);
 
       if (code === 0) {
-        log(`Download completed successfully. Total tracks: ${downloadedCount}`, 'INFO');
+        log(`Download completed successfully. Total tracks: ${completedTracks}`, 'INFO');
         sendProgress({
           status: 'Download completed successfully!',
           progress: 100,
           completed: true,
-          downloadedCount
+          totalTracks,
+          completedTracks,
+          skippedTracks,
+          downloadedCount: completedTracks,
+          failedCount: failedTracks.length,
+          failedTracks: failedTracks,
+          unavailableCount: unavailableVideos.length,
+          unavailableVideos: unavailableVideos.map(v => v.videoId)
         });
       } else if (code === null || code === 143 || code === 15) {
         // SIGTERM or killed by user
@@ -241,13 +368,21 @@ app.post('/api/download', upload.single('cookies'), async (req, res) => {
         sendProgress({
           status: 'Download cancelled',
           completed: true,
-          cancelled: true
+          cancelled: true,
+          totalTracks,
+          completedTracks,
+          failedCount: failedTracks.length,
+          failedTracks: failedTracks
         });
       } else {
         log(`Download failed with exit code ${code}`, 'ERROR');
         sendProgress({
           error: `Download failed with exit code ${code}`,
-          completed: true
+          completed: true,
+          totalTracks,
+          completedTracks,
+          failedCount: failedTracks.length,
+          failedTracks: failedTracks
         });
       }
       res.end();

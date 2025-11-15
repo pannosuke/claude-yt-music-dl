@@ -212,6 +212,163 @@
             font-size: 13px;
             color: #666;
         }
+
+        /* Status Dashboard Styles */
+        .stats-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+            gap: 15px;
+            margin-bottom: 20px;
+        }
+
+        .stat-card {
+            background: #f7f9fc;
+            border-radius: 8px;
+            padding: 15px;
+            border: 2px solid #e1e8ed;
+            transition: transform 0.2s, box-shadow 0.2s;
+        }
+
+        .stat-card:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1);
+        }
+
+        .stat-card .label {
+            font-size: 11px;
+            color: #666;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+            margin-bottom: 5px;
+        }
+
+        .stat-card .value {
+            font-size: 28px;
+            font-weight: bold;
+            color: #333;
+        }
+
+        .stat-card.total .value { color: #667eea; }
+        .stat-card.completed .value { color: #27ae60; }
+        .stat-card.remaining .value { color: #f39c12; }
+        .stat-card.failed .value { color: #e74c3c; }
+
+        .current-track-card {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            border-radius: 8px;
+            padding: 20px;
+            margin-bottom: 20px;
+        }
+
+        .current-track-card h3 {
+            margin: 0 0 15px 0;
+            font-size: 14px;
+            opacity: 0.9;
+            text-transform: uppercase;
+            letter-spacing: 1px;
+        }
+
+        .track-info {
+            margin-bottom: 15px;
+        }
+
+        .track-info-row {
+            margin-bottom: 8px;
+            font-size: 14px;
+        }
+
+        .track-info-label {
+            opacity: 0.8;
+            margin-right: 8px;
+        }
+
+        .track-info-value {
+            font-weight: 600;
+        }
+
+        .track-title {
+            font-size: 18px;
+            font-weight: bold;
+            margin-top: 5px;
+        }
+
+        .format-badge {
+            display: inline-block;
+            background: rgba(255, 255, 255, 0.2);
+            padding: 4px 12px;
+            border-radius: 12px;
+            font-size: 11px;
+            font-weight: 600;
+            letter-spacing: 0.5px;
+        }
+
+        .file-progress-bar-bg {
+            background: rgba(255, 255, 255, 0.2);
+            height: 6px;
+            border-radius: 3px;
+            overflow: hidden;
+            margin-top: 10px;
+        }
+
+        .file-progress-bar {
+            height: 100%;
+            background: white;
+            width: 0%;
+            transition: width 0.3s ease;
+        }
+
+        .overall-progress-section {
+            margin-bottom: 20px;
+        }
+
+        .overall-progress-section h3 {
+            font-size: 14px;
+            color: #333;
+            margin-bottom: 10px;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+        }
+
+        .errors-panel {
+            background: #fff3cd;
+            border-left: 4px solid #f39c12;
+            border-radius: 4px;
+            padding: 15px;
+            margin-bottom: 20px;
+            display: none;
+        }
+
+        .errors-panel.has-errors {
+            display: block;
+        }
+
+        .errors-panel h4 {
+            margin: 0 0 10px 0;
+            font-size: 13px;
+            color: #856404;
+            cursor: pointer;
+            user-select: none;
+        }
+
+        .errors-panel h4:hover {
+            text-decoration: underline;
+        }
+
+        .error-list {
+            font-size: 12px;
+            color: #856404;
+            margin: 5px 0;
+        }
+
+        .error-list-item {
+            padding: 5px 0;
+            border-bottom: 1px solid #ffeeba;
+        }
+
+        .error-list-item:last-child {
+            border-bottom: none;
+        }
     </style>
 </head>
 <body>
@@ -231,7 +388,8 @@
                     type="text"
                     id="playlistUrl"
                     name="playlistUrl"
-                    value="https://music.youtube.com/playlist?list=PLIMS5ZHnio8C99pQvIzbeRLCA0tofwTEF&si=nJ5-5IAfpf7xZjM-"
+                    value=""
+                    placeholder="https://music.youtube.com/playlist?list=..."
                     required
                 >
             </div>
@@ -242,7 +400,8 @@
                     type="text"
                     id="outputPath"
                     name="outputPath"
-                    value="/Users/eric/Library/CloudStorage/GoogleDrive-eallerton@gmail.com/My Drive/10 Music TEST"
+                    value=""
+                    placeholder="/path/to/music/directory"
                     required
                 >
                 <small style="color: #666; font-size: 12px; display: block; margin-top: 5px;">
@@ -251,13 +410,13 @@
             </div>
 
             <div class="form-group">
-                <label for="cookiesPath">Cookies File Path *</label>
+                <label for="cookiesPath">Cookies File Path</label>
                 <input
                     type="text"
                     id="cookiesPath"
                     name="cookiesPath"
-                    value="/Users/eric/Library/CloudStorage/GoogleDrive-eallerton@gmail.com/My Drive/10 Music TEST/music.youtube.com_cookies.txt"
-                    required
+                    value=""
+                    placeholder="/path/to/cookies.txt (optional)"
                 >
                 <small style="color: #666; font-size: 12px; display: block; margin-top: 5px;">
                     Path to your cookies.txt file for authentication
@@ -265,13 +424,13 @@
             </div>
 
             <div class="form-group">
-                <label for="poToken">PO Token *</label>
+                <label for="poToken">PO Token</label>
                 <input
                     type="text"
                     id="poToken"
                     name="poToken"
-                    value="MlXDzct7Rvc-fcPzeTpmOnTP7Vxb_DlMn74PdT2exO53nqFVJ1a6131n4pgvd8nRtnCzgdhdPEGd-t5tBGpHeT8MC-2ghaGoX71PZk8tuRcWl1pylOUi"
-                    required
+                    value=""
+                    placeholder="Your PO token (optional)"
                 >
             </div>
 
@@ -282,10 +441,66 @@
         </form>
 
         <div class="progress-container" id="progressContainer">
-            <div class="progress-text" id="progressText">Initializing...</div>
-            <div class="progress-bar-bg">
-                <div class="progress-bar" id="progressBar"></div>
+            <!-- Statistics Cards -->
+            <div class="stats-grid">
+                <div class="stat-card total">
+                    <div class="label">Total Tracks</div>
+                    <div class="value" id="totalTracks">--</div>
+                </div>
+                <div class="stat-card completed">
+                    <div class="label">Completed</div>
+                    <div class="value" id="completedTracks">0</div>
+                </div>
+                <div class="stat-card remaining">
+                    <div class="label">Remaining</div>
+                    <div class="value" id="remainingTracks">--</div>
+                </div>
+                <div class="stat-card failed">
+                    <div class="label">Failed</div>
+                    <div class="value" id="failedTracks">0</div>
+                </div>
             </div>
+
+            <!-- Current Track Card -->
+            <div class="current-track-card" id="currentTrackCard">
+                <h3>Currently Downloading</h3>
+                <div class="track-info">
+                    <div class="track-info-row">
+                        <span class="track-info-label">Artist:</span>
+                        <span class="track-info-value" id="currentArtist">--</span>
+                    </div>
+                    <div class="track-info-row">
+                        <span class="track-info-label">Album:</span>
+                        <span class="track-info-value" id="currentAlbum">--</span>
+                    </div>
+                    <div class="track-title" id="currentTitle">Initializing...</div>
+                    <div style="margin-top: 10px;">
+                        <span class="format-badge" id="formatBadge">FLAC</span>
+                    </div>
+                </div>
+                <div class="file-progress-bar-bg">
+                    <div class="file-progress-bar" id="fileProgressBar"></div>
+                </div>
+            </div>
+
+            <!-- Errors Panel -->
+            <div class="errors-panel" id="errorsPanel">
+                <h4 onclick="this.nextElementSibling.style.display = this.nextElementSibling.style.display === 'none' ? 'block' : 'none'">
+                    ⚠️ Issues Detected (Click to expand)
+                </h4>
+                <div class="error-list" id="errorList" style="display: none;"></div>
+            </div>
+
+            <!-- Overall Progress -->
+            <div class="overall-progress-section">
+                <h3>Overall Progress</h3>
+                <div class="progress-text" id="progressText">Initializing...</div>
+                <div class="progress-bar-bg">
+                    <div class="progress-bar" id="progressBar"></div>
+                </div>
+            </div>
+
+            <!-- Debug Log -->
             <div class="log-container" id="logContainer"></div>
         </div>
     </div>
@@ -299,7 +514,52 @@
         const progressText = document.getElementById('progressText');
         const logContainer = document.getElementById('logContainer');
 
+        // New dashboard elements
+        const totalTracksEl = document.getElementById('totalTracks');
+        const completedTracksEl = document.getElementById('completedTracks');
+        const remainingTracksEl = document.getElementById('remainingTracks');
+        const failedTracksEl = document.getElementById('failedTracks');
+        const currentArtistEl = document.getElementById('currentArtist');
+        const currentAlbumEl = document.getElementById('currentAlbum');
+        const currentTitleEl = document.getElementById('currentTitle');
+        const formatBadgeEl = document.getElementById('formatBadge');
+        const fileProgressBarEl = document.getElementById('fileProgressBar');
+        const errorsPanelEl = document.getElementById('errorsPanel');
+        const errorListEl = document.getElementById('errorList');
+
         let currentDownloadId = null;
+
+        // Load saved settings from localStorage on page load
+        function loadSavedSettings() {
+            const savedPlaylistUrl = localStorage.getItem('playlistUrl');
+            const savedOutputPath = localStorage.getItem('outputPath');
+            const savedCookiesPath = localStorage.getItem('cookiesPath');
+            const savedPoToken = localStorage.getItem('poToken');
+
+            if (savedPlaylistUrl) {
+                document.getElementById('playlistUrl').value = savedPlaylistUrl;
+            }
+            if (savedOutputPath) {
+                document.getElementById('outputPath').value = savedOutputPath;
+            }
+            if (savedCookiesPath) {
+                document.getElementById('cookiesPath').value = savedCookiesPath;
+            }
+            if (savedPoToken) {
+                document.getElementById('poToken').value = savedPoToken;
+            }
+        }
+
+        // Save settings to localStorage
+        function saveSettings(playlistUrl, outputPath, cookiesPath, poToken) {
+            localStorage.setItem('playlistUrl', playlistUrl);
+            localStorage.setItem('outputPath', outputPath);
+            localStorage.setItem('cookiesPath', cookiesPath || '');
+            localStorage.setItem('poToken', poToken || '');
+        }
+
+        // Load settings when page loads
+        loadSavedSettings();
 
         function addLog(message, type = 'info') {
             const logEntry = document.createElement('div');
@@ -314,6 +574,85 @@
         function updateProgress(percent, text) {
             progressBar.style.width = percent + '%';
             progressText.textContent = text;
+        }
+
+        function updateDashboard(data) {
+            // Update statistics cards
+            if (data.totalTracks !== undefined) {
+                totalTracksEl.textContent = data.totalTracks;
+            }
+            if (data.completedTracks !== undefined) {
+                completedTracksEl.textContent = data.completedTracks;
+            }
+            if (data.remaining !== undefined) {
+                remainingTracksEl.textContent = data.remaining;
+            }
+            if (data.failedCount !== undefined) {
+                failedTracksEl.textContent = data.failedCount;
+            }
+
+            // Update current track info
+            if (data.currentTrackInfo) {
+                if (data.currentTrackInfo.artist) {
+                    currentArtistEl.textContent = data.currentTrackInfo.artist;
+                }
+                if (data.currentTrackInfo.album) {
+                    currentAlbumEl.textContent = data.currentTrackInfo.album;
+                }
+                if (data.currentTrackInfo.title) {
+                    currentTitleEl.textContent = data.currentTrackInfo.title;
+                }
+            }
+
+            // Update format badge
+            if (data.format) {
+                formatBadgeEl.textContent = data.format;
+            }
+
+            // Update file progress bar
+            if (data.downloadProgress !== undefined) {
+                fileProgressBarEl.style.width = data.downloadProgress + '%';
+            }
+
+            // Update overall progress
+            if (data.progress !== undefined) {
+                updateProgress(data.progress, data.status || progressText.textContent);
+            }
+
+            // Handle errors and warnings
+            if (data.failedCount > 0 || data.unavailableCount > 0) {
+                errorsPanelEl.classList.add('has-errors');
+                updateErrorList(data);
+            }
+        }
+
+        function updateErrorList(data) {
+            if (!data.failedCount && !data.unavailableCount) return;
+
+            let html = '';
+
+            if (data.failedCount > 0) {
+                html += `<div><strong>Failed Downloads: ${data.failedCount}</strong></div>`;
+
+                // Display detailed error messages
+                if (data.failedTracks && data.failedTracks.length > 0) {
+                    data.failedTracks.forEach((track, index) => {
+                        const errorType = track.type.charAt(0).toUpperCase() + track.type.slice(1);
+                        html += `<div class="error-list-item">`;
+                        html += `<strong>${index + 1}. ${errorType}</strong><br>`;
+                        html += `<span style="font-size: 11px; opacity: 0.9;">${track.message}</span>`;
+                        html += `</div>`;
+                    });
+                }
+            }
+
+            if (data.unavailableCount > 0 && data.unavailableVideos && data.unavailableVideos.length > 0) {
+                html += `<div style="margin-top: 10px;"><strong>Unavailable Video IDs:</strong></div>`;
+                html += '<div class="error-list-item" style="font-family: monospace; font-size: 10px;">' +
+                       data.unavailableVideos.join(', ') + '</div>';
+            }
+
+            errorListEl.innerHTML = html;
         }
 
         // Cancel button handler
@@ -349,6 +688,9 @@
             const outputPath = document.getElementById('outputPath').value;
             const cookiesPath = document.getElementById('cookiesPath').value;
             const poToken = document.getElementById('poToken').value;
+
+            // Save settings to localStorage for future use
+            saveSettings(playlistUrl, outputPath, cookiesPath, poToken);
 
             formData.append('playlistUrl', playlistUrl);
             formData.append('outputPath', outputPath);
@@ -399,19 +741,20 @@
                                 addLog(`Download ID: ${currentDownloadId}`, 'debug');
                             }
 
+                            // Update dashboard with new data
+                            updateDashboard(data);
+
                             // Log raw data for debugging
                             if (data.debug) {
                                 addLog(data.debug, 'debug');
                             }
 
                             if (data.status) {
-                                updateProgress(data.progress || 0, data.status);
                                 addLog(data.status, 'info');
                             }
 
                             if (data.error) {
                                 addLog(data.error, 'error');
-                                updateProgress(0, 'Error occurred');
                             }
 
                             if (data.warning) {
