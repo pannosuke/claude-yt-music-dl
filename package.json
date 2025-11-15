@@ -1,0 +1,19 @@
+{
+  "name": "claude-yt-music-dl",
+  "version": "1.0.0",
+  "description": "YouTube Music playlist downloader with web interface",
+  "main": "server.js",
+  "type": "module",
+  "scripts": {
+    "start": "node server.js",
+    "dev": "node --watch server.js"
+  },
+  "keywords": ["youtube", "music", "downloader", "flac"],
+  "author": "",
+  "license": "MIT",
+  "dependencies": {
+    "express": "^4.18.2",
+    "multer": "^1.4.5-lts.1",
+    "cors": "^2.8.5"
+  }
+}

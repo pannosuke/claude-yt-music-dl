@@ -1,0 +1,452 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>YouTube Music Playlist Downloader</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            padding: 20px;
+        }
+
+        .container {
+            background: white;
+            border-radius: 12px;
+            box-shadow: 0 20px 60px rgba(0, 0, 0, 0.3);
+            padding: 40px;
+            max-width: 600px;
+            width: 100%;
+        }
+
+        h1 {
+            color: #333;
+            margin-bottom: 10px;
+            font-size: 28px;
+        }
+
+        .subtitle {
+            color: #666;
+            margin-bottom: 30px;
+            font-size: 14px;
+        }
+
+        .form-group {
+            margin-bottom: 20px;
+        }
+
+        label {
+            display: block;
+            margin-bottom: 8px;
+            color: #333;
+            font-weight: 500;
+            font-size: 14px;
+        }
+
+        input[type="text"],
+        input[type="file"] {
+            width: 100%;
+            padding: 12px;
+            border: 2px solid #e1e8ed;
+            border-radius: 8px;
+            font-size: 14px;
+            transition: border-color 0.3s;
+        }
+
+        input[type="text"]:focus {
+            outline: none;
+            border-color: #667eea;
+        }
+
+        input[type="file"] {
+            padding: 10px;
+            cursor: pointer;
+        }
+
+        .optional {
+            color: #999;
+            font-weight: 400;
+            font-size: 12px;
+        }
+
+        button {
+            width: 100%;
+            padding: 14px;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            border: none;
+            border-radius: 8px;
+            font-size: 16px;
+            font-weight: 600;
+            cursor: pointer;
+            transition: transform 0.2s, box-shadow 0.2s;
+        }
+
+        button:hover:not(:disabled) {
+            transform: translateY(-2px);
+            box-shadow: 0 10px 20px rgba(102, 126, 234, 0.4);
+        }
+
+        button:disabled {
+            opacity: 0.6;
+            cursor: not-allowed;
+        }
+
+        .button-cancel {
+            background: linear-gradient(135deg, #e74c3c 0%, #c0392b 100%);
+            margin-top: 10px;
+        }
+
+        .button-cancel:hover:not(:disabled) {
+            box-shadow: 0 10px 20px rgba(231, 76, 60, 0.4);
+        }
+
+        .button-group {
+            display: flex;
+            gap: 10px;
+        }
+
+        .button-group button {
+            flex: 1;
+        }
+
+        .progress-container {
+            margin-top: 30px;
+            display: none;
+        }
+
+        .progress-bar-bg {
+            width: 100%;
+            height: 8px;
+            background: #e1e8ed;
+            border-radius: 4px;
+            overflow: hidden;
+            margin-bottom: 15px;
+        }
+
+        .progress-bar {
+            height: 100%;
+            background: linear-gradient(90deg, #667eea 0%, #764ba2 100%);
+            width: 0%;
+            transition: width 0.3s ease;
+        }
+
+        .progress-text {
+            color: #333;
+            font-size: 14px;
+            margin-bottom: 10px;
+        }
+
+        .log-container {
+            max-height: 400px;
+            overflow-y: auto;
+            background: #1e1e1e;
+            border-radius: 8px;
+            padding: 15px;
+            font-family: 'Courier New', monospace;
+            font-size: 11px;
+            color: #d4d4d4;
+            line-height: 1.6;
+        }
+
+        .log-entry {
+            margin-bottom: 3px;
+            padding: 3px 5px;
+            border-left: 3px solid #667eea;
+            padding-left: 10px;
+            word-wrap: break-word;
+        }
+
+        .log-entry.debug {
+            border-left-color: #888;
+            color: #888;
+        }
+
+        .log-entry.error {
+            border-left-color: #e74c3c;
+            color: #e74c3c;
+        }
+
+        .log-entry.warning {
+            border-left-color: #f39c12;
+            color: #f39c12;
+        }
+
+        .log-entry.success {
+            border-left-color: #27ae60;
+            color: #27ae60;
+        }
+
+        .info-box {
+            background: #f0f4ff;
+            border-left: 4px solid #667eea;
+            padding: 15px;
+            margin-bottom: 20px;
+            border-radius: 4px;
+            font-size: 13px;
+            color: #555;
+        }
+
+        .info-box strong {
+            color: #667eea;
+        }
+
+        .folder-browser {
+            display: none;
+            padding: 10px;
+            background: #f7f9fa;
+            border: 2px solid #e1e8ed;
+            border-radius: 8px;
+            margin-top: 10px;
+            font-size: 13px;
+            color: #666;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>YouTube Music Downloader</h1>
+        <p class="subtitle">Download playlists in FLAC format, organized by artist and album</p>
+
+        <div class="info-box">
+            <strong>Requirements:</strong> Make sure <code>yt-dlp</code> is installed on your system.<br>
+            Install with: <code>pip install yt-dlp</code>
+        </div>
+
+        <form id="downloadForm">
+            <div class="form-group">
+                <label for="playlistUrl">YouTube Music Playlist URL *</label>
+                <input
+                    type="text"
+                    id="playlistUrl"
+                    name="playlistUrl"
+                    value="https://music.youtube.com/playlist?list=PLIMS5ZHnio8C99pQvIzbeRLCA0tofwTEF&si=nJ5-5IAfpf7xZjM-"
+                    required
+                >
+            </div>
+
+            <div class="form-group">
+                <label for="outputPath">Output Directory Path *</label>
+                <input
+                    type="text"
+                    id="outputPath"
+                    name="outputPath"
+                    value="/Users/eric/Library/CloudStorage/GoogleDrive-eallerton@gmail.com/My Drive/10 Music TEST"
+                    required
+                >
+                <small style="color: #666; font-size: 12px; display: block; margin-top: 5px;">
+                    Enter the full path where you want to save the music files
+                </small>
+            </div>
+
+            <div class="form-group">
+                <label for="cookiesPath">Cookies File Path *</label>
+                <input
+                    type="text"
+                    id="cookiesPath"
+                    name="cookiesPath"
+                    value="/Users/eric/Library/CloudStorage/GoogleDrive-eallerton@gmail.com/My Drive/10 Music TEST/music.youtube.com_cookies.txt"
+                    required
+                >
+                <small style="color: #666; font-size: 12px; display: block; margin-top: 5px;">
+                    Path to your cookies.txt file for authentication
+                </small>
+            </div>
+
+            <div class="form-group">
+                <label for="poToken">PO Token *</label>
+                <input
+                    type="text"
+                    id="poToken"
+                    name="poToken"
+                    value="MlXDzct7Rvc-fcPzeTpmOnTP7Vxb_DlMn74PdT2exO53nqFVJ1a6131n4pgvd8nRtnCzgdhdPEGd-t5tBGpHeT8MC-2ghaGoX71PZk8tuRcWl1pylOUi"
+                    required
+                >
+            </div>
+
+            <div class="button-group">
+                <button type="submit" id="downloadBtn">Start Download</button>
+                <button type="button" id="cancelBtn" class="button-cancel" style="display: none;">Cancel Download</button>
+            </div>
+        </form>
+
+        <div class="progress-container" id="progressContainer">
+            <div class="progress-text" id="progressText">Initializing...</div>
+            <div class="progress-bar-bg">
+                <div class="progress-bar" id="progressBar"></div>
+            </div>
+            <div class="log-container" id="logContainer"></div>
+        </div>
+    </div>
+
+    <script>
+        const form = document.getElementById('downloadForm');
+        const downloadBtn = document.getElementById('downloadBtn');
+        const cancelBtn = document.getElementById('cancelBtn');
+        const progressContainer = document.getElementById('progressContainer');
+        const progressBar = document.getElementById('progressBar');
+        const progressText = document.getElementById('progressText');
+        const logContainer = document.getElementById('logContainer');
+
+        let currentDownloadId = null;
+
+        function addLog(message, type = 'info') {
+            const logEntry = document.createElement('div');
+            logEntry.className = `log-entry ${type}`;
+            const timestamp = new Date().toLocaleTimeString('en-US', { hour12: false, hour: '2-digit', minute: '2-digit', second: '2-digit' });
+            logEntry.textContent = `[${timestamp}] ${message}`;
+            logContainer.appendChild(logEntry);
+            logContainer.scrollTop = logContainer.scrollHeight;
+            console.log(`[${type.toUpperCase()}] ${message}`);
+        }
+
+        function updateProgress(percent, text) {
+            progressBar.style.width = percent + '%';
+            progressText.textContent = text;
+        }
+
+        // Cancel button handler
+        cancelBtn.addEventListener('click', async () => {
+            if (!currentDownloadId) return;
+
+            addLog('Sending cancel request...', 'warning');
+            cancelBtn.disabled = true;
+
+            try {
+                const response = await fetch('http://localhost:3000/api/cancel', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ downloadId: currentDownloadId })
+                });
+
+                const result = await response.json();
+                if (result.success) {
+                    addLog('Download cancellation requested', 'warning');
+                } else {
+                    addLog('Failed to cancel download', 'error');
+                }
+            } catch (error) {
+                addLog(`Cancel error: ${error.message}`, 'error');
+            }
+        });
+
+        form.addEventListener('submit', async (e) => {
+            e.preventDefault();
+
+            const formData = new FormData();
+            const playlistUrl = document.getElementById('playlistUrl').value;
+            const outputPath = document.getElementById('outputPath').value;
+            const cookiesPath = document.getElementById('cookiesPath').value;
+            const poToken = document.getElementById('poToken').value;
+
+            formData.append('playlistUrl', playlistUrl);
+            formData.append('outputPath', outputPath);
+            formData.append('cookiesPath', cookiesPath);
+
+            if (poToken) {
+                formData.append('poToken', poToken);
+            }
+
+            addLog(`Starting download request...`, 'debug');
+            addLog(`Playlist: ${playlistUrl}`, 'debug');
+            addLog(`Output: ${outputPath}`, 'debug');
+            addLog(`Cookies: ${cookiesPath}`, 'debug');
+            addLog(`PO Token: ${poToken ? 'Provided' : 'Not provided'}`, 'debug');
+
+            // Show progress container
+            progressContainer.style.display = 'block';
+            logContainer.innerHTML = '';
+            downloadBtn.disabled = true;
+            downloadBtn.textContent = 'Downloading...';
+            downloadBtn.style.display = 'none';
+            cancelBtn.style.display = 'block';
+            cancelBtn.disabled = false;
+
+            try {
+                const response = await fetch('http://localhost:3000/api/download', {
+                    method: 'POST',
+                    body: formData
+                });
+
+                const reader = response.body.getReader();
+                const decoder = new TextDecoder();
+
+                while (true) {
+                    const { done, value } = await reader.read();
+                    if (done) break;
+
+                    const chunk = decoder.decode(value);
+                    const lines = chunk.split('\n');
+
+                    for (const line of lines) {
+                        if (line.startsWith('data: ')) {
+                            const data = JSON.parse(line.slice(6));
+
+                            // Store download ID
+                            if (data.downloadId && !currentDownloadId) {
+                                currentDownloadId = data.downloadId;
+                                addLog(`Download ID: ${currentDownloadId}`, 'debug');
+                            }
+
+                            // Log raw data for debugging
+                            if (data.debug) {
+                                addLog(data.debug, 'debug');
+                            }
+
+                            if (data.status) {
+                                updateProgress(data.progress || 0, data.status);
+                                addLog(data.status, 'info');
+                            }
+
+                            if (data.error) {
+                                addLog(data.error, 'error');
+                                updateProgress(0, 'Error occurred');
+                            }
+
+                            if (data.warning) {
+                                addLog(data.warning, 'warning');
+                            }
+
+                            if (data.rawOutput) {
+                                addLog(data.rawOutput, 'debug');
+                            }
+
+                            if (data.completed) {
+                                downloadBtn.disabled = false;
+                                downloadBtn.textContent = 'Start Download';
+                                downloadBtn.style.display = 'block';
+                                cancelBtn.style.display = 'none';
+                                currentDownloadId = null;
+
+                                if (data.cancelled) {
+                                    addLog('Download was cancelled', 'warning');
+                                } else if (data.progress === 100) {
+                                    addLog(`Download completed! ${data.downloadedCount || 0} track(s) processed.`, 'success');
+                                }
+                            }
+                        }
+                    }
+                }
+            } catch (error) {
+                addLog(`Error: ${error.message}`, 'error');
+                downloadBtn.disabled = false;
+                downloadBtn.textContent = 'Start Download';
+                downloadBtn.style.display = 'block';
+                cancelBtn.style.display = 'none';
+                currentDownloadId = null;
+            }
+        });
+    </script>
+</body>
+</html>
