@@ -6,6 +6,7 @@ import { promises as fs } from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import { createWriteStream } from 'fs';
+import { scanDirectory, groupByArtist, generateScanSummary } from './modules/organizer/scanner.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -403,6 +404,87 @@ app.post('/api/download', upload.single('cookies'), async (req, res) => {
     log(`Stack trace: ${error.stack}`, 'ERROR');
     sendProgress({
       error: `Server error: ${error.message}`,
+      completed: true
+    });
+    res.end();
+  }
+});
+
+// Scan music library endpoint (Music Organizer Module)
+app.post('/api/scan', async (req, res) => {
+  const { musicPath } = req.body;
+
+  log('=== NEW SCAN REQUEST ===', 'INFO');
+  log(`Music Path: ${musicPath}`, 'DEBUG');
+
+  if (!musicPath) {
+    log('Missing required parameter: musicPath', 'ERROR');
+    return res.status(400).json({ error: 'Music path is required' });
+  }
+
+  // Set response headers for streaming
+  res.setHeader('Content-Type', 'text/event-stream');
+  res.setHeader('Cache-Control', 'no-cache');
+  res.setHeader('Connection', 'keep-alive');
+
+  const sendProgress = (data) => {
+    if (DEBUG && data.debug) {
+      log(data.debug, 'DEBUG');
+    }
+    res.write(`data: ${JSON.stringify(data)}\n\n`);
+  };
+
+  try {
+    // Verify music path exists
+    try {
+      await fs.access(musicPath);
+      log(`Music path verified: ${musicPath}`, 'DEBUG');
+      sendProgress({ debug: `Music path verified: ${musicPath}` });
+    } catch (error) {
+      log(`Music path does not exist: ${musicPath}`, 'ERROR');
+      sendProgress({ error: `Music path does not exist: ${musicPath}` });
+      res.end();
+      return;
+    }
+
+    sendProgress({ status: 'Starting scan...', progress: 0 });
+
+    // Scan directory with progress callbacks
+    const scannedFiles = await scanDirectory(musicPath, (progressData) => {
+      sendProgress(progressData);
+    });
+
+    // Generate summary statistics
+    const summary = generateScanSummary(scannedFiles);
+
+    // Group files by artist for alphabetical processing
+    const groupedByArtist = groupByArtist(scannedFiles);
+
+    log(`Scan completed. Found ${scannedFiles.length} files`, 'INFO');
+
+    // Send final results
+    sendProgress({
+      status: 'Scan completed successfully!',
+      progress: 100,
+      completed: true,
+      summary,
+      groupedByArtist,
+      scannedFiles: scannedFiles.map(f => ({
+        filePath: f.filePath,
+        fileName: f.fileName,
+        relativePath: f.relativePath,
+        metadata: f.metadata,
+        compliance: f.compliance
+      }))
+    });
+
+    res.end();
+
+  } catch (error) {
+    log(`Scan error: ${error.message}`, 'ERROR');
+    log(`Stack trace: ${error.stack}`, 'ERROR');
+    sendProgress({
+      error: `Scan error: ${error.message}`,
       completed: true
     });
     res.end();

@@ -169,11 +169,85 @@
                 <strong>Supports:</strong> Western and Japanese music databases
             </div>
 
-            <div id="organizerContent">
-                <p style="text-align: center; color: #666; padding: 40px;">
-                    🚧 Music Organizer module is under construction 🚧<br>
-                    <small>Coming soon with Plex-optimized folder organization!</small>
-                </p>
+            <!-- Scan Form -->
+            <form id="scanForm">
+                <div class="form-group">
+                    <label for="musicPath">Music Library Path *</label>
+                    <input
+                        type="text"
+                        id="musicPath"
+                        name="musicPath"
+                        value=""
+                        placeholder="/path/to/music/library"
+                        required
+                    >
+                    <small style="color: #666; font-size: 12px; display: block; margin-top: 5px;">
+                        Enter the full path to your music library root folder
+                    </small>
+                </div>
+
+                <button type="submit" id="scanBtn">Scan Library</button>
+            </form>
+
+            <!-- Progress Container -->
+            <div class="progress-container" id="scanProgressContainer">
+                <div class="progress-text" id="scanProgressText">Initializing scan...</div>
+                <div class="progress-bar-bg">
+                    <div class="progress-bar" id="scanProgressBar"></div>
+                </div>
+                <div class="log-container" id="scanLogContainer"></div>
+            </div>
+
+            <!-- Scan Results -->
+            <div class="scan-results" id="scanResults">
+                <div class="results-header">
+                    <h2>Scan Results</h2>
+                    <div class="result-actions">
+                        <button type="button" id="newScanBtn">New Scan</button>
+                    </div>
+                </div>
+
+                <!-- Summary Cards -->
+                <div class="summary-grid">
+                    <div class="summary-card total">
+                        <div class="label">Total Files</div>
+                        <div class="value" id="summaryTotalFiles">--</div>
+                    </div>
+                    <div class="summary-card compliant">
+                        <div class="label">Plex Compliant</div>
+                        <div class="value" id="summaryCompliantFiles">--</div>
+                    </div>
+                    <div class="summary-card needs-fix">
+                        <div class="label">Needs Fix</div>
+                        <div class="value" id="summaryNeedsFix">--</div>
+                    </div>
+                    <div class="summary-card artists">
+                        <div class="label">Artists</div>
+                        <div class="value" id="summaryArtists">--</div>
+                    </div>
+                    <div class="summary-card albums">
+                        <div class="label">Albums</div>
+                        <div class="value" id="summaryAlbums">--</div>
+                    </div>
+                </div>
+
+                <!-- Issues Breakdown -->
+                <div class="issues-breakdown" id="issuesBreakdown" style="display: none;">
+                    <h4>Issues Found</h4>
+                    <div id="issuesList"></div>
+                </div>
+
+                <!-- Format Distribution -->
+                <div style="margin-bottom: 20px;">
+                    <h3 style="font-size: 14px; margin-bottom: 10px;">Audio Formats</h3>
+                    <div class="format-list" id="formatList"></div>
+                </div>
+
+                <!-- Alphabetical Groups -->
+                <div class="artist-groups" id="artistGroups">
+                    <h3>Artists Grouped Alphabetically</h3>
+                    <div class="group-grid" id="groupGrid"></div>
+                </div>
             </div>
         </div>
     </div>
