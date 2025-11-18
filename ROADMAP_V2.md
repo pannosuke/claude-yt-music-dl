@@ -67,21 +67,21 @@ claude-yt-music-dl/
 │   ├── css/
 │   │   ├── shared.css          ✅ Complete
 │   │   ├── downloader.css      ✅ Complete
-│   │   └── organizer.css       🚧 Placeholder
+│   │   └── organizer.css       ✅ Complete (Phases 2-3.5)
 │   ├── js/
 │   │   ├── router.js           ✅ Complete
 │   │   ├── downloader.js       ✅ Complete
-│   │   └── organizer.js        🚧 Placeholder
-│   └── index.html              ✅ Complete (Tab UI)
+│   │   └── organizer.js        ✅ Complete (Phases 2-3.5)
+│   └── index.html              ✅ Complete (Phases 1-3.5)
 ├── modules/
 │   ├── downloader/             📁 Created (unused)
 │   └── organizer/              📁 Created
-│       ├── scanner.js          ✅ Complete
-│       ├── plex.js             ✅ Complete
-│       ├── musicbrainz.js      ✅ Complete
-│       ├── matcher.js          ⏳ Planned (Phase 3.5)
+│       ├── scanner.js          ✅ Complete (Phase 2)
+│       ├── plex.js             ✅ Complete (Phase 2.5)
+│       ├── musicbrainz.js      ✅ Complete (Phase 3)
+│       ├── matcher.js          ✅ Complete (Phase 3.5)
 │       └── organizer.js        ⏳ Planned (Phase 4)
-├── server.js                   ✅ Complete (v1.1.0)
+├── server.js                   ✅ Complete (Phases 1-3.5)
 ├── package.json                ✅ Updated to v2.0.0
 └── ROADMAP_V2.md               ✅ This file
 ```
@@ -508,9 +508,11 @@ function normalizeString(str) {
 
 ---
 
-### ⏳ Phase 3.5: Auto-Match & Rename Engine (PLANNED)
-**Status:** Not Started
+### ✅ Phase 3.5: Auto-Match & Rename Engine (COMPLETE)
+**Status:** 100% Complete
 **Estimated Time:** 4-5 hours
+**Time Spent:** ~4 hours
+**Completed:** November 18, 2025
 
 **Goals:**
 - Automatically match scanned files to MusicBrainz database in batch
@@ -542,48 +544,45 @@ With Phase 3.5, the workflow becomes:
 **Tasks:**
 
 **Backend (modules/organizer/matcher.js):**
-- [ ] Create `modules/organizer/matcher.js` backend module
-- [ ] Implement batch file-to-MusicBrainz matching algorithm
-  - [ ] Extract artist/album/title from existing file metadata
-  - [ ] Search MusicBrainz for each file using searchRecording()
-  - [ ] Calculate confidence scores (reuse Levenshtein from musicbrainz.js)
-  - [ ] Cache MusicBrainz responses per file
-- [ ] Create `/api/matcher/batch-match` endpoint (SSE progress)
-  - [ ] Input: Array of scanned files
-  - [ ] Output: SSE stream with match results + confidence scores
-- [ ] Implement rename preview generator
-  - [ ] Input: MusicBrainz match data
-  - [ ] Output: Proposed file path following Plex standards
-  - [ ] Format: `{artist}/{album}/{track_number} - {title}.{ext}`
-- [ ] Create `/api/matcher/preview-rename` endpoint
-  - [ ] Show before/after file paths
-  - [ ] Group by confidence category
-- [ ] Create `/api/matcher/execute-rename` endpoint
-  - [ ] Support dry-run mode (no actual file operations)
-  - [ ] Rename files using fs.rename()
-  - [ ] Handle errors gracefully (permissions, file locks)
-  - [ ] SSE progress updates per file
+- [x] Create `modules/organizer/matcher.js` backend module
+- [x] Implement batch file-to-MusicBrainz matching algorithm
+  - [x] Extract artist/album/title from existing file metadata
+  - [x] Search MusicBrainz for each file using searchRecording()
+  - [x] Calculate confidence scores (reuse Levenshtein from musicbrainz.js)
+  - [x] Cache MusicBrainz responses per file
+- [x] Create `/api/matcher/batch-match` endpoint (SSE progress)
+  - [x] Input: Array of scanned files
+  - [x] Output: SSE stream with match results + confidence scores
+- [x] Implement rename preview generator
+  - [x] Input: MusicBrainz match data
+  - [x] Output: Proposed file path following Plex standards
+  - [x] Format: `{artist}/{album (year)}/{track_number} - {title}.{ext}`
+- [x] Create `/api/matcher/preview-rename` endpoint
+  - [x] Show before/after file paths
+  - [x] Group by confidence category
+- [x] Create `/api/matcher/execute-rename` endpoint
+  - [x] Support dry-run mode (no actual file operations)
+  - [x] Rename files using fs.rename()
+  - [x] Handle errors gracefully (permissions, file locks)
+  - [x] SSE progress updates per file
 
 **Frontend (public/js/organizer.js):**
-- [ ] Add "Auto-Match to MusicBrainz" button (after deep scan)
-- [ ] Display batch matching progress (files processed, matches found)
-- [ ] Show match results grouped by confidence:
-  - [ ] ✅ **Auto-Approved** (≥90%): Artist - Album - Title (confidence badge)
-  - [ ] ⚠️ **Review Required** (70-89%): Artist - Album - Title (confidence badge)
-  - [ ] ❌ **Manual Search** (<70%): Artist - Album - Title (confidence badge)
-- [ ] Add action buttons per match result:
-  - [ ] "Approve" - Accept MusicBrainz match
-  - [ ] "Edit" - Manually search MusicBrainz and select different match
-  - [ ] "Skip" - Ignore this file
-- [ ] Add "Preview Renames" button
-- [ ] Display rename preview table:
-  - [ ] Current path
-  - [ ] Proposed path (following Plex standards)
-  - [ ] Status (pending/approved/skipped)
-- [ ] Add "Execute Rename (Dry-Run)" button
-- [ ] Add "Execute Rename (Apply Changes)" button
-- [ ] Display rename execution progress with SSE
-- [ ] Show success/error messages per file
+- [x] Add "Auto-Match to MusicBrainz" button (after deep scan)
+- [x] Display batch matching progress (files processed, matches found)
+- [x] Show match results grouped by confidence:
+  - [x] ✅ **Auto-Approved** (≥90%): Artist - Album - Title (confidence badge)
+  - [x] ⚠️ **Review Required** (70-89%): Artist - Album - Title (confidence badge)
+  - [x] ❌ **Manual Search** (<70%): Artist - Album - Title (confidence badge)
+- [x] Add filter buttons for match results (all, auto_approve, review, manual, skipped)
+- [x] Add "Preview Renames" button
+- [x] Display rename preview table:
+  - [x] Current path
+  - [x] Proposed path (following Plex standards)
+  - [x] Limited to 50 items for performance
+- [x] Add "Execute Rename (Dry-Run)" button
+- [x] Add "Execute Rename (Apply Changes)" button
+- [x] Display rename execution progress with SSE
+- [x] Show success/error messages per file
 
 **Deliverables:**
 - ✅ Batch matching algorithm
@@ -1280,7 +1279,7 @@ None - all dependencies installed
 
 ## Progress Summary
 
-**Overall Progress: 50%** (Phases 1-3 Complete)
+**Overall Progress: 58%** (Phases 1-3.5 Complete)
 
 | Phase | Status | Progress | Files |
 |-------|--------|----------|-------|
@@ -1288,14 +1287,14 @@ None - all dependencies installed
 | Phase 2: File Scanning | ✅ Complete | 100% | 4 files modified |
 | Phase 2.5: Plex Integration | ✅ Complete | 100% | 3 files modified |
 | Phase 3: MusicBrainz API | ✅ Complete | 100% | 5 files modified |
-| Phase 3.5: Auto-Match & Rename | ⏳ Planned | 0% | 0 files |
+| Phase 3.5: Auto-Match & Rename | ✅ Complete | 100% | 5 files modified |
 | Phase 4: Move to Live Library | ⏳ Planned | 0% | 0 files |
 | Phase 5: Real-time Progress | 🔄 Partial | 50% | SSE already implemented |
 | Phase 6: Testing & Polish | ⏳ Planned | 0% | 0 files |
 
-**Last Updated:** November 17, 2025
-**Version:** 2.0.0-alpha.3
-**Next Milestone:** Phase 3.5 (Auto-Match & Rename Engine)
+**Last Updated:** November 18, 2025
+**Version:** 2.0.0-alpha.4
+**Next Milestone:** Phase 4 (Move to Live Plex Library)
 
 ---
 
@@ -1307,15 +1306,15 @@ None - all dependencies installed
 - ✅ File scanning with metadata reading (Phase 2)
 - ✅ Plex Media Server integration (Phase 2.5)
 - ✅ MusicBrainz API integration (Phase 3)
-- ⏳ Auto-matching and renaming pending (Phase 3.5)
+- ✅ Auto-matching and renaming complete (Phase 3.5)
 - ⏳ Move to live library pending (Phase 4)
 
 ### Next Steps
-1. Start Phase 3.5: Auto-Match & Rename Engine
-2. Create matcher.js backend module
-3. Implement /api/matcher/batch-match endpoint (SSE)
-4. Build frontend auto-match UI with confidence thresholds
-5. Implement rename preview and execution
+1. Start Phase 4: Move to Live Plex Library
+2. Create organizer.js backend module
+3. Implement /api/organizer/move-to-library endpoint (SSE)
+4. Build frontend UI for live library path configuration
+5. Implement quality upgrade/downgrade handling
 
 ### Testing the App
 ```bash
@@ -1328,7 +1327,11 @@ npm start
 - [server.js](server.js:1) - Main backend server
 - [public/index.html](public/index.html:1) - Main UI with tabs
 - [public/js/router.js](public/js/router.js:1) - Navigation system
-- [public/js/organizer.js](public/js/organizer.js:1) - Organizer module (placeholder)
+- [public/js/organizer.js](public/js/organizer.js:1) - Organizer module frontend
+- [modules/organizer/scanner.js](modules/organizer/scanner.js:1) - File scanning
+- [modules/organizer/plex.js](modules/organizer/plex.js:1) - Plex integration
+- [modules/organizer/musicbrainz.js](modules/organizer/musicbrainz.js:1) - MusicBrainz API
+- [modules/organizer/matcher.js](modules/organizer/matcher.js:1) - Auto-matching & renaming
 
 ---
 
