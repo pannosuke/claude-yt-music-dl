@@ -441,6 +441,117 @@
                     <div id="mbRecordingResults" class="mb-results"></div>
                 </div>
             </div>
+
+            <!-- Auto-Match & Rename Section (Phase 3.5) -->
+            <div id="matcherSection" class="results-section" style="display: none; margin-top: 30px;">
+                <div class="section-header">
+                    <h2>🔄 Auto-Match & Rename Engine</h2>
+                    <p class="subtitle">Automatically match your scanned files to MusicBrainz and rename them to Plex standards</p>
+                </div>
+
+                <!-- Batch Match Controls -->
+                <div class="card">
+                    <h3>Step 1: Batch Match to MusicBrainz</h3>
+                    <p style="color: #64748b; font-size: 14px; margin-bottom: 15px;">
+                        Match all scanned files against the MusicBrainz database. High-confidence matches (≥90%) will be auto-approved.
+                    </p>
+                    <div class="button-group">
+                        <button type="button" id="startBatchMatchBtn" class="button-primary">
+                            Start Batch Match
+                        </button>
+                        <button type="button" id="cancelBatchMatchBtn" class="button-danger" style="display: none;">
+                            Cancel
+                        </button>
+                    </div>
+
+                    <!-- Match Progress -->
+                    <div id="matchProgressContainer" style="display: none; margin-top: 20px;">
+                        <div class="progress-text" id="matchProgressText">Initializing...</div>
+                        <div class="progress-bar-bg">
+                            <div class="progress-bar" id="matchProgressBar"></div>
+                        </div>
+                    </div>
+
+                    <!-- Match Statistics -->
+                    <div id="matchStatsContainer" style="display: none; margin-top: 20px;">
+                        <div class="comparison-stats-grid">
+                            <div class="comparison-stat-card safe">
+                                <div class="label">Auto-Approved (≥90%)</div>
+                                <div class="value" id="statAutoApprove">0</div>
+                                <div class="desc">High confidence matches</div>
+                            </div>
+                            <div class="comparison-stat-card upgrade">
+                                <div class="label">Review Required (70-89%)</div>
+                                <div class="value" id="statReview">0</div>
+                                <div class="desc">Medium confidence matches</div>
+                            </div>
+                            <div class="comparison-stat-card downgrade">
+                                <div class="label">Manual Search (<70%)</div>
+                                <div class="value" id="statManual">0</div>
+                                <div class="desc">Low confidence matches</div>
+                            </div>
+                            <div class="comparison-stat-card duplicate">
+                                <div class="label">Skipped/Errors</div>
+                                <div class="value" id="statSkipped">0</div>
+                                <div class="desc">No match or missing data</div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Match Results Review -->
+                <div id="matchResultsContainer" class="card" style="display: none; margin-top: 20px;">
+                    <h3>Step 2: Review Match Results</h3>
+                    <div class="filter-buttons" style="margin-bottom: 15px;">
+                        <button class="filter-btn active" data-filter="all">All</button>
+                        <button class="filter-btn" data-filter="auto_approve">Auto-Approved</button>
+                        <button class="filter-btn" data-filter="review">Review Required</button>
+                        <button class="filter-btn" data-filter="manual">Manual Search</button>
+                        <button class="filter-btn" data-filter="skipped">Skipped</button>
+                    </div>
+
+                    <div id="matchResultsList" class="match-results-list"></div>
+
+                    <div class="button-group" style="margin-top: 20px;">
+                        <button type="button" id="previewRenamesBtn" class="button-primary">
+                            Preview Renames →
+                        </button>
+                    </div>
+                </div>
+
+                <!-- Rename Preview -->
+                <div id="renamePreviewContainer" class="card" style="display: none; margin-top: 20px;">
+                    <h3>Step 3: Preview & Execute Renames</h3>
+                    <p style="color: #64748b; font-size: 14px; margin-bottom: 15px;">
+                        Review the proposed file renames. Run a dry-run first to verify changes before applying.
+                    </p>
+
+                    <div id="renamePreviewList" class="rename-preview-list"></div>
+
+                    <div class="button-group" style="margin-top: 20px;">
+                        <button type="button" id="executeDryRunBtn" class="button-secondary">
+                            🔍 Execute Rename (Dry-Run)
+                        </button>
+                        <button type="button" id="executeRenameBtn" class="button-primary">
+                            ✅ Execute Rename (Apply Changes)
+                        </button>
+                    </div>
+
+                    <!-- Rename Progress -->
+                    <div id="renameProgressContainer" style="display: none; margin-top: 20px;">
+                        <div class="progress-text" id="renameProgressText">Initializing...</div>
+                        <div class="progress-bar-bg">
+                            <div class="progress-bar" id="renameProgressBar"></div>
+                        </div>
+                    </div>
+
+                    <!-- Rename Results -->
+                    <div id="renameResultsContainer" style="display: none; margin-top: 20px;">
+                        <h4>Rename Results</h4>
+                        <div id="renameResultsList" class="rename-results-list"></div>
+                    </div>
+                </div>
+            </div>
         </div>
     </div>
 

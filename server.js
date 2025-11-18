@@ -9,6 +9,7 @@ import { createWriteStream } from 'fs';
 import { scanDirectory, scanLibraryStructure, groupByArtist, generateScanSummary } from './modules/organizer/scanner.js';
 import { testConnection, getLibraries, fetchLibraryTracks, compareWithPlex } from './modules/organizer/plex.js';
 import { searchArtist, searchRelease, searchRecording, getReleaseDetails, getCacheStats } from './modules/organizer/musicbrainz.js';
+import { batchMatchFiles, generateRenamePreviews, executeRename, getMatchStatistics } from './modules/organizer/matcher.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -884,6 +885,174 @@ app.get('/api/musicbrainz/cache-stats', async (req, res) => {
       success: false,
       error: error.message
     });
+  }
+});
+
+// ========================================
+// MATCHER ENDPOINTS (Phase 3.5)
+// ========================================
+
+/**
+ * POST /api/matcher/batch-match
+ * Batch match scanned files to MusicBrainz with SSE progress
+ */
+app.post('/api/matcher/batch-match', async (req, res) => {
+  log('=== BATCH MATCH REQUEST ===', 'INFO');
+
+  const { files } = req.body;
+
+  if (!files || !Array.isArray(files) || files.length === 0) {
+    return res.status(400).json({
+      success: false,
+      error: 'Missing or invalid files array'
+    });
+  }
+
+  log(`Batch matching ${files.length} files to MusicBrainz`, 'INFO');
+
+  // Set up SSE
+  res.setHeader('Content-Type', 'text/event-stream');
+  res.setHeader('Cache-Control', 'no-cache');
+  res.setHeader('Connection', 'keep-alive');
+
+  try {
+    const matchResults = await batchMatchFiles(files, (progress) => {
+      // Send progress updates via SSE
+      res.write(`data: ${JSON.stringify({
+        type: 'progress',
+        ...progress
+      })}\n\n`);
+    });
+
+    // Get statistics
+    const stats = getMatchStatistics(matchResults);
+
+    // Send completion message
+    res.write(`data: ${JSON.stringify({
+      type: 'complete',
+      results: matchResults,
+      stats: stats,
+      message: `Batch matching complete! Matched ${stats.matched}/${stats.total} files`
+    })}\n\n`);
+
+    res.end();
+    log(`Batch matching complete: ${stats.matched}/${stats.total} files matched`, 'INFO');
+
+  } catch (error) {
+    log(`Batch match error: ${error.message}`, 'ERROR');
+    res.write(`data: ${JSON.stringify({
+      type: 'error',
+      error: error.message
+    })}\n\n`);
+    res.end();
+  }
+});
+
+/**
+ * POST /api/matcher/preview-rename
+ * Generate rename previews for matched files
+ */
+app.post('/api/matcher/preview-rename', async (req, res) => {
+  log('=== RENAME PREVIEW REQUEST ===', 'INFO');
+
+  const { matchResults, basePath } = req.body;
+
+  if (!matchResults || !Array.isArray(matchResults)) {
+    return res.status(400).json({
+      success: false,
+      error: 'Missing or invalid matchResults array'
+    });
+  }
+
+  if (!basePath) {
+    return res.status(400).json({
+      success: false,
+      error: 'Missing basePath for rename previews'
+    });
+  }
+
+  try {
+    log(`Generating rename previews for ${matchResults.length} files (basePath: ${basePath})`, 'INFO');
+    const previews = generateRenamePreviews(matchResults, basePath);
+
+    log(`Rename previews generated: ${previews.summary.autoApprove} auto-approve, ${previews.summary.review} review, ${previews.summary.manual} manual`, 'INFO');
+
+    res.json({
+      success: true,
+      previews: previews
+    });
+
+  } catch (error) {
+    log(`Rename preview error: ${error.message}`, 'ERROR');
+    res.status(500).json({
+      success: false,
+      error: error.message
+    });
+  }
+});
+
+/**
+ * POST /api/matcher/execute-rename
+ * Execute file rename operations with SSE progress
+ */
+app.post('/api/matcher/execute-rename', async (req, res) => {
+  log('=== EXECUTE RENAME REQUEST ===', 'INFO');
+
+  const { renameItems, dryRun = true } = req.body;
+
+  if (!renameItems || !Array.isArray(renameItems)) {
+    return res.status(400).json({
+      success: false,
+      error: 'Missing or invalid renameItems array'
+    });
+  }
+
+  log(`Executing rename for ${renameItems.length} files (dryRun: ${dryRun})`, 'INFO');
+
+  // Set up SSE
+  res.setHeader('Content-Type', 'text/event-stream');
+  res.setHeader('Cache-Control', 'no-cache');
+  res.setHeader('Connection', 'keep-alive');
+
+  try {
+    const results = await executeRename(renameItems, dryRun, (progress) => {
+      // Send progress updates via SSE
+      res.write(`data: ${JSON.stringify({
+        type: 'progress',
+        ...progress
+      })}\n\n`);
+    });
+
+    // Calculate statistics
+    const successCount = results.filter(r => r.status === 'success' || r.status === 'success_dry_run').length;
+    const errorCount = results.filter(r => r.status === 'error').length;
+    const skippedCount = results.filter(r => r.status === 'skipped').length;
+
+    // Send completion message
+    res.write(`data: ${JSON.stringify({
+      type: 'complete',
+      results: results,
+      summary: {
+        total: results.length,
+        success: successCount,
+        errors: errorCount,
+        skipped: skippedCount
+      },
+      message: dryRun
+        ? `[DRY RUN] Preview complete: ${successCount} files would be renamed`
+        : `Rename complete: ${successCount} files renamed successfully, ${errorCount} errors`
+    })}\n\n`);
+
+    res.end();
+    log(`Rename execution complete: ${successCount} success, ${errorCount} errors, ${skippedCount} skipped`, 'INFO');
+
+  } catch (error) {
+    log(`Execute rename error: ${error.message}`, 'ERROR');
+    res.write(`data: ${JSON.stringify({
+      type: 'error',
+      error: error.message
+    })}\n\n`);
+    res.end();
   }
 });
 

@@ -823,3 +823,150 @@
     background: #fee2e2;
     border-radius: 4px;
 }
+
+/* ================================================================================
+ * AUTO-MATCH & RENAME STYLES (Phase 3.5)
+ * ================================================================================ */
+
+.match-results-list {
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+    max-height: 500px;
+    overflow-y: auto;
+}
+
+.match-result-item {
+    padding: 15px;
+    border: 1px solid #e1e8ed;
+    border-radius: 4px;
+    background: white;
+    transition: box-shadow 0.2s;
+}
+
+.match-result-item:hover {
+    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
+}
+
+.match-result-item.auto-approve {
+    border-left: 4px solid #10b981;
+}
+
+.match-result-item.review {
+    border-left: 4px solid #f59e0b;
+}
+
+.match-result-item.manual {
+    border-left: 4px solid #ef4444;
+}
+
+.match-result-item.skipped {
+    border-left: 4px solid #94a3b8;
+    opacity: 0.7;
+}
+
+.match-result-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: start;
+    margin-bottom: 10px;
+}
+
+.match-result-info {
+    flex: 1;
+}
+
+.match-result-title {
+    font-size: 15px;
+    font-weight: 600;
+    color: #2c3e50;
+    margin: 0 0 5px 0;
+}
+
+.match-result-meta {
+    font-size: 13px;
+    color: #64748b;
+}
+
+.match-result-badges {
+    display: flex;
+    gap: 5px;
+    flex-wrap: wrap;
+    margin-top: 10px;
+}
+
+.rename-preview-list {
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+    max-height: 500px;
+    overflow-y: auto;
+}
+
+.rename-preview-item {
+    padding: 15px;
+    border: 1px solid #e1e8ed;
+    border-radius: 4px;
+    background: #f8f9fa;
+}
+
+.rename-preview-path {
+    font-family: 'Monaco', 'Menlo', 'Courier New', monospace;
+    font-size: 12px;
+    margin: 5px 0;
+    padding: 8px;
+    background: white;
+    border-radius: 3px;
+    word-break: break-all;
+}
+
+.rename-preview-path.original {
+    color: #64748b;
+}
+
+.rename-preview-path.proposed {
+    color: #10b981;
+    font-weight: 500;
+}
+
+.rename-preview-arrow {
+    text-align: center;
+    font-size: 16px;
+    color: #94a3b8;
+    margin: 5px 0;
+}
+
+.rename-results-list {
+    display: flex;
+    flex-direction: column;
+    gap: 5px;
+    max-height: 400px;
+    overflow-y: auto;
+    padding: 10px;
+    background: #f8f9fa;
+    border-radius: 4px;
+}
+
+.rename-result-item {
+    padding: 8px 12px;
+    border-radius: 3px;
+    font-size: 13px;
+    display: flex;
+    align-items: center;
+    gap: 10px;
+}
+
+.rename-result-item.success {
+    background: #d1fae5;
+    color: #065f46;
+}
+
+.rename-result-item.error {
+    background: #fee2e2;
+    color: #991b1b;
+}
+
+.rename-result-item.skipped {
+    background: #f1f5f9;
+    color: #64748b;
+}

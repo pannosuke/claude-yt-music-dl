@@ -530,9 +530,10 @@ async function handleDeepScan(scanAll = false) {
                             if (data.summary) {
                                 addScanLog(`Deep scan completed! ${data.summary.totalFiles} files processed.`, 'success');
                                 displayScanResults(data);
-                                // Initialize Plex and MusicBrainz integrations after deep scan
+                                // Initialize Plex, MusicBrainz, and Matcher integrations after deep scan
                                 initPlexIntegration();
                                 initMusicBrainzIntegration();
+                                initMatcherIntegration();
                             }
                         }
                     } catch (parseError) {
@@ -715,9 +716,10 @@ async function handleScanSubmit(e) {
                             // Deep scan completed
                             addScanLog(`Deep scan completed! ${data.summary.totalFiles} files processed.`, 'success');
                             displayScanResults(data);
-                            // Initialize Plex and MusicBrainz integrations after deep scan
+                            // Initialize Plex, MusicBrainz, and Matcher integrations after deep scan
                             initPlexIntegration();
                             initMusicBrainzIntegration();
+                            initMatcherIntegration();
                         }
                     }
                 }
@@ -1519,6 +1521,423 @@ function getConfidenceBadgeColor(confidence) {
     if (confidence >= 90) return '#10b981'; // green
     if (confidence >= 70) return '#f59e0b'; // amber
     return '#ef4444'; // red
+}
+
+/**
+ * ================================================================================
+ * AUTO-MATCH & RENAME ENGINE (Phase 3.5)
+ * ================================================================================
+ */
+
+// Global state for matcher
+let matchResults = [];
+let renamePreviews = null;
+let currentMatchFilter = 'all';
+
+/**
+ * Initialize Auto-Match & Rename integration after deep scan completes
+ */
+function initMatcherIntegration() {
+    console.log('[Matcher] Initializing Auto-Match & Rename integration...');
+
+    const matcherSection = document.getElementById('matcherSection');
+    const startBatchMatchBtn = document.getElementById('startBatchMatchBtn');
+    const previewRenamesBtn = document.getElementById('previewRenamesBtn');
+    const executeDryRunBtn = document.getElementById('executeDryRunBtn');
+    const executeRenameBtn = document.getElementById('executeRenameBtn');
+
+    // Show matcher section
+    if (matcherSection && scanData) {
+        matcherSection.style.display = 'block';
+        addScanLog('Auto-Match & Rename engine ready - scroll down to start', 'info');
+    }
+
+    // Setup event listeners
+    if (startBatchMatchBtn) {
+        startBatchMatchBtn.addEventListener('click', handleStartBatchMatch);
+    }
+
+    if (previewRenamesBtn) {
+        previewRenamesBtn.addEventListener('click', handlePreviewRenames);
+    }
+
+    if (executeDryRunBtn) {
+        executeDryRunBtn.addEventListener('click', () => handleExecuteRename(true));
+    }
+
+    if (executeRenameBtn) {
+        executeRenameBtn.addEventListener('click', () => handleExecuteRename(false));
+    }
+
+    // Setup filter buttons
+    const filterButtons = document.querySelectorAll('#matchResultsContainer .filter-btn');
+    filterButtons.forEach(btn => {
+        btn.addEventListener('click', (e) => {
+            filterButtons.forEach(b => b.classList.remove('active'));
+            e.target.classList.add('active');
+            currentMatchFilter = e.target.dataset.filter;
+            displayMatchResults(matchResults, currentMatchFilter);
+        });
+    });
+}
+
+/**
+ * Handle Start Batch Match button click
+ */
+async function handleStartBatchMatch() {
+    console.log('[Matcher] Starting batch match...');
+
+    if (!scanData || !scanData.files || scanData.files.length === 0) {
+        addScanLog('No scanned files to match. Please run a deep scan first.', 'error');
+        return;
+    }
+
+    const startBtn = document.getElementById('startBatchMatchBtn');
+    const progressContainer = document.getElementById('matchProgressContainer');
+    const progressText = document.getElementById('matchProgressText');
+    const progressBar = document.getElementById('matchProgressBar');
+    const statsContainer = document.getElementById('matchStatsContainer');
+
+    // Show progress UI
+    startBtn.disabled = true;
+    progressContainer.style.display = 'block';
+    statsContainer.style.display = 'none';
+
+    try {
+        const eventSource = await fetch('http://localhost:3000/api/matcher/batch-match', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ files: scanData.files })
+        });
+
+        const reader = eventSource.body.getReader();
+        const decoder = new TextDecoder();
+
+        while (true) {
+            const { done, value } = await reader.read();
+            if (done) break;
+
+            const chunk = decoder.decode(value);
+            const lines = chunk.split('\n');
+
+            for (const line of lines) {
+                if (line.startsWith('data: ')) {
+                    try {
+                        const data = JSON.parse(line.slice(6));
+
+                        if (data.type === 'progress') {
+                            progressText.textContent = `Matching ${data.currentFile || ''}... (${data.processed}/${data.total})`;
+                            progressBar.style.width = `${data.progress}%`;
+                        } else if (data.type === 'complete') {
+                            console.log('[Matcher] Batch match complete:', data);
+                            matchResults = data.results;
+
+                            progressText.textContent = data.message;
+                            progressBar.style.width = '100%';
+
+                            // Show statistics
+                            displayMatchStatistics(data.stats);
+                            statsContainer.style.display = 'block';
+
+                            // Show match results
+                            displayMatchResults(matchResults, 'all');
+                            document.getElementById('matchResultsContainer').style.display = 'block';
+
+                            addScanLog(`Batch matching complete! ${data.stats.matched}/${data.stats.total} files matched`, 'success');
+                        } else if (data.type === 'error') {
+                            progressText.textContent = `Error: ${data.error}`;
+                            addScanLog(`Batch match error: ${data.error}`, 'error');
+                        }
+                    } catch (parseError) {
+                        console.error('[Matcher] Parse error:', parseError);
+                    }
+                }
+            }
+        }
+    } catch (error) {
+        console.error('[Matcher] Batch match error:', error);
+        progressText.textContent = `Error: ${error.message}`;
+        addScanLog(`Batch match error: ${error.message}`, 'error');
+    } finally {
+        startBtn.disabled = false;
+    }
+}
+
+/**
+ * Display match statistics
+ */
+function displayMatchStatistics(stats) {
+    document.getElementById('statAutoApprove').textContent = stats.byCategory.auto_approve || 0;
+    document.getElementById('statReview').textContent = stats.byCategory.review || 0;
+    document.getElementById('statManual').textContent = stats.byCategory.manual || 0;
+    document.getElementById('statSkipped').textContent = stats.skipped + stats.errors;
+}
+
+/**
+ * Display match results with filtering
+ */
+function displayMatchResults(results, filter = 'all') {
+    const resultsList = document.getElementById('matchResultsList');
+
+    if (!results || results.length === 0) {
+        resultsList.innerHTML = '<div class="no-results">No match results to display</div>';
+        return;
+    }
+
+    // Filter results
+    let filteredResults = results;
+    if (filter !== 'all') {
+        filteredResults = results.filter(r => r.category === filter || (filter === 'skipped' && (r.status === 'skipped' || r.status === 'error' || r.status === 'no_match')));
+    }
+
+    let html = '';
+
+    for (const result of filteredResults) {
+        const category = result.category || 'skipped';
+        const confidenceBadge = result.confidence > 0 ?
+            `<span class="format-badge" style="background-color: ${getConfidenceBadgeColor(result.confidence)};">${result.confidence}% match</span>` : '';
+
+        const mbMatch = result.mbMatch;
+        const matchInfo = mbMatch ?
+            `<strong>MusicBrainz Match:</strong> ${mbMatch.artist} - ${mbMatch.title}` :
+            `<strong>Status:</strong> ${result.reason || 'No match found'}`;
+
+        html += `
+            <div class="match-result-item ${category}">
+                <div class="match-result-header">
+                    <div class="match-result-info">
+                        <h4 class="match-result-title">${result.originalMetadata.title || 'Unknown Title'}</h4>
+                        <div class="match-result-meta">
+                            <strong>Original:</strong> ${result.originalMetadata.artist || 'Unknown'} - ${result.originalMetadata.album || 'Unknown'}
+                        </div>
+                        <div class="match-result-meta" style="margin-top: 5px;">
+                            ${matchInfo}
+                        </div>
+                    </div>
+                </div>
+                <div class="match-result-badges">
+                    ${confidenceBadge}
+                    <span class="format-badge">${result.category === 'auto_approve' ? 'Auto-Approved' : result.category === 'review' ? 'Review' : result.category === 'manual' ? 'Manual' : 'Skipped'}</span>
+                    ${result.fileInfo ? `<span class="format-badge">${result.fileInfo.codec || result.fileInfo.format}</span>` : ''}
+                </div>
+            </div>
+        `;
+    }
+
+    resultsList.innerHTML = html || '<div class="no-results">No results match this filter</div>';
+}
+
+/**
+ * Handle Preview Renames button click
+ */
+async function handlePreviewRenames() {
+    console.log('[Matcher] Generating rename previews...');
+
+    if (!matchResults || matchResults.length === 0) {
+        addScanLog('No match results to preview. Please run batch match first.', 'error');
+        return;
+    }
+
+    if (!scanData || !scanData.basePath) {
+        addScanLog('Missing base path for rename preview', 'error');
+        return;
+    }
+
+    const previewBtn = document.getElementById('previewRenamesBtn');
+    previewBtn.disabled = true;
+
+    try {
+        const response = await fetch('http://localhost:3000/api/matcher/preview-rename', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                matchResults: matchResults,
+                basePath: scanData.basePath
+            })
+        });
+
+        const result = await response.json();
+
+        if (result.success) {
+            renamePreviews = result.previews;
+            console.log('[Matcher] Rename previews generated:', renamePreviews);
+
+            displayRenamePreviews(renamePreviews);
+            document.getElementById('renamePreviewContainer').style.display = 'block';
+
+            addScanLog(`Rename preview generated: ${renamePreviews.summary.autoApprove + renamePreviews.summary.review} files ready to rename`, 'success');
+        } else {
+            addScanLog(`Preview error: ${result.error}`, 'error');
+        }
+    } catch (error) {
+        console.error('[Matcher] Preview error:', error);
+        addScanLog(`Preview error: ${error.message}`, 'error');
+    } finally {
+        previewBtn.disabled = false;
+    }
+}
+
+/**
+ * Display rename previews
+ */
+function displayRenamePreviews(previews) {
+    const previewList = document.getElementById('renamePreviewList');
+
+    if (!previews) {
+        previewList.innerHTML = '<div class="no-results">No previews to display</div>';
+        return;
+    }
+
+    // Combine auto_approve and review items (skip manual and skipped for rename)
+    const itemsToRename = [...previews.auto_approve, ...previews.review];
+
+    if (itemsToRename.length === 0) {
+        previewList.innerHTML = '<div class="no-results">No files ready to rename</div>';
+        return;
+    }
+
+    let html = '';
+
+    for (const item of itemsToRename.slice(0, 50)) { // Limit to first 50 for performance
+        if (!item.renamePreview || !item.renamePreview.changed) continue;
+
+        html += `
+            <div class="rename-preview-item">
+                <div class="rename-preview-path original">
+                    <strong>Current:</strong> ${item.renamePreview.originalPath}
+                </div>
+                <div class="rename-preview-arrow">↓</div>
+                <div class="rename-preview-path proposed">
+                    <strong>Proposed:</strong> ${item.renamePreview.proposedPath}
+                </div>
+            </div>
+        `;
+    }
+
+    if (itemsToRename.length > 50) {
+        html += `<div class="no-results">... and ${itemsToRename.length - 50} more files</div>`;
+    }
+
+    previewList.innerHTML = html;
+}
+
+/**
+ * Handle Execute Rename button click
+ */
+async function handleExecuteRename(dryRun = true) {
+    console.log(`[Matcher] Executing rename (dryRun: ${dryRun})...`);
+
+    if (!renamePreviews) {
+        addScanLog('No rename previews available. Please click "Preview Renames" first.', 'error');
+        return;
+    }
+
+    // Combine auto_approve and review items
+    const itemsToRename = [...renamePreviews.auto_approve, ...renamePreviews.review];
+
+    if (itemsToRename.length === 0) {
+        addScanLog('No files to rename', 'error');
+        return;
+    }
+
+    const dryRunBtn = document.getElementById('executeDryRunBtn');
+    const renameBtn = document.getElementById('executeRenameBtn');
+    const progressContainer = document.getElementById('renameProgressContainer');
+    const progressText = document.getElementById('renameProgressText');
+    const progressBar = document.getElementById('renameProgressBar');
+    const resultsContainer = document.getElementById('renameResultsContainer');
+
+    // Disable buttons and show progress
+    dryRunBtn.disabled = true;
+    renameBtn.disabled = true;
+    progressContainer.style.display = 'block';
+    resultsContainer.style.display = 'none';
+
+    try {
+        const eventSource = await fetch('http://localhost:3000/api/matcher/execute-rename', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                renameItems: itemsToRename,
+                dryRun: dryRun
+            })
+        });
+
+        const reader = eventSource.body.getReader();
+        const decoder = new TextDecoder();
+
+        while (true) {
+            const { done, value } = await reader.read();
+            if (done) break;
+
+            const chunk = decoder.decode(value);
+            const lines = chunk.split('\n');
+
+            for (const line of lines) {
+                if (line.startsWith('data: ')) {
+                    try {
+                        const data = JSON.parse(line.slice(6));
+
+                        if (data.type === 'progress') {
+                            progressText.textContent = `${dryRun ? '[DRY RUN] ' : ''}Processing ${data.currentFile || ''}... (${data.processed}/${data.total})`;
+                            progressBar.style.width = `${data.progress}%`;
+                        } else if (data.type === 'complete') {
+                            console.log('[Matcher] Rename complete:', data);
+
+                            progressText.textContent = data.message;
+                            progressBar.style.width = '100%';
+
+                            // Display results
+                            displayRenameResults(data.results, dryRun);
+                            resultsContainer.style.display = 'block';
+
+                            addScanLog(data.message, 'success');
+                        } else if (data.type === 'error') {
+                            progressText.textContent = `Error: ${data.error}`;
+                            addScanLog(`Rename error: ${data.error}`, 'error');
+                        }
+                    } catch (parseError) {
+                        console.error('[Matcher] Parse error:', parseError);
+                    }
+                }
+            }
+        }
+    } catch (error) {
+        console.error('[Matcher] Rename error:', error);
+        progressText.textContent = `Error: ${error.message}`;
+        addScanLog(`Rename error: ${error.message}`, 'error');
+    } finally {
+        dryRunBtn.disabled = false;
+        renameBtn.disabled = false;
+    }
+}
+
+/**
+ * Display rename execution results
+ */
+function displayRenameResults(results, dryRun) {
+    const resultsList = document.getElementById('renameResultsList');
+
+    if (!results || results.length === 0) {
+        resultsList.innerHTML = '<div class="no-results">No results to display</div>';
+        return;
+    }
+
+    let html = '';
+
+    for (const result of results) {
+        const statusClass = result.status.includes('success') ? 'success' : result.status === 'error' ? 'error' : 'skipped';
+        const icon = statusClass === 'success' ? '✅' : statusClass === 'error' ? '❌' : '⏭️';
+
+        html += `
+            <div class="rename-result-item ${statusClass}">
+                <span>${icon}</span>
+                <span>${result.message || result.status}</span>
+            </div>
+        `;
+    }
+
+    resultsList.innerHTML = html;
 }
 
 // Register the organizer route
