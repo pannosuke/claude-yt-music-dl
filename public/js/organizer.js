@@ -1892,6 +1892,11 @@ async function handleExecuteRename(dryRun = true) {
                             resultsContainer.style.display = 'block';
 
                             addScanLog(data.message, 'success');
+
+                            // Initialize Phase 4 after successful rename (not dry-run)
+                            if (!dryRun && data.results && data.results.length > 0) {
+                                initMoveToLibrary();
+                            }
                         } else if (data.type === 'error') {
                             progressText.textContent = `Error: ${data.error}`;
                             addScanLog(`Rename error: ${data.error}`, 'error');
@@ -1938,6 +1943,536 @@ function displayRenameResults(results, dryRun) {
     }
 
     resultsList.innerHTML = html;
+}
+
+/**
+ * ================================================================================
+ * MOVE TO LIVE PLEX LIBRARY (Phase 4)
+ * ================================================================================
+ */
+
+// Phase 4 state
+let movePlan = null;
+let moveResults = null;
+
+/**
+ * Initialize Move to Live Library section after rename is complete
+ */
+function initMoveToLibrary() {
+    console.log('[Move] Initializing Move to Live Library...');
+
+    const moveSection = document.getElementById('moveToLibrarySection');
+    const validatePathBtn = document.getElementById('validatePathBtn');
+    const planMoveBtn = document.getElementById('planMoveBtn');
+    const executeMoveBtn = document.getElementById('executeMoveBtn');
+    const cancelPlanBtn = document.getElementById('cancelPlanBtn');
+    const rollbackMoveBtn = document.getElementById('rollbackMoveBtn');
+    const triggerPlexRefreshBtn = document.getElementById('triggerPlexRefreshBtn');
+    const newMoveBtn = document.getElementById('newMoveBtn');
+    const liveLibraryPathInput = document.getElementById('liveLibraryPath');
+
+    // Show move section after rename completes
+    if (moveSection && renamePreviews) {
+        moveSection.style.display = 'block';
+        addScanLog('Move to Live Library ready - scroll down to configure', 'info');
+    }
+
+    // Load saved live library path
+    const savedLiveLibPath = localStorage.getItem('liveLibraryPath');
+    if (savedLiveLibPath && liveLibraryPathInput) {
+        liveLibraryPathInput.value = savedLiveLibPath;
+    }
+
+    // Setup event listeners
+    if (validatePathBtn) {
+        validatePathBtn.addEventListener('click', handleValidatePath);
+    }
+
+    if (planMoveBtn) {
+        planMoveBtn.addEventListener('click', handlePlanMove);
+    }
+
+    if (executeMoveBtn) {
+        executeMoveBtn.addEventListener('click', handleExecuteMove);
+    }
+
+    if (cancelPlanBtn) {
+        cancelPlanBtn.addEventListener('click', handleCancelPlan);
+    }
+
+    if (rollbackMoveBtn) {
+        rollbackMoveBtn.addEventListener('click', handleRollback);
+    }
+
+    if (triggerPlexRefreshBtn) {
+        triggerPlexRefreshBtn.addEventListener('click', handleTriggerPlexRefresh);
+    }
+
+    if (newMoveBtn) {
+        newMoveBtn.addEventListener('click', resetMoveSection);
+    }
+
+    // Add drag and drop support for live library path
+    setupLiveLibraryDragAndDrop();
+}
+
+/**
+ * Setup drag and drop for live library path input
+ */
+function setupLiveLibraryDragAndDrop() {
+    const input = document.getElementById('liveLibraryPath');
+    if (!input) return;
+
+    // Prevent default drag behaviors
+    ['dragenter', 'dragover', 'dragleave', 'drop'].forEach(eventName => {
+        input.addEventListener(eventName, preventDefaults, false);
+    });
+
+    function preventDefaults(e) {
+        e.preventDefault();
+        e.stopPropagation();
+    }
+
+    // Highlight input when item is dragged over it
+    ['dragenter', 'dragover'].forEach(eventName => {
+        input.addEventListener(eventName, () => {
+            input.style.borderColor = '#667eea';
+            input.style.backgroundColor = '#f0f4ff';
+        }, false);
+    });
+
+    ['dragleave', 'drop'].forEach(eventName => {
+        input.addEventListener(eventName, () => {
+            input.style.borderColor = '#e1e8ed';
+            input.style.backgroundColor = 'white';
+        }, false);
+    });
+
+    // Handle dropped files/folders
+    input.addEventListener('drop', (e) => {
+        const dt = e.dataTransfer;
+        const items = dt.items;
+
+        if (items) {
+            for (let i = 0; i < items.length; i++) {
+                const item = items[i];
+                if (item.kind === 'file') {
+                    const entry = item.webkitGetAsEntry();
+                    if (entry && entry.isDirectory) {
+                        const folderName = entry.name;
+                        const fullPath = prompt(
+                            `You dropped the folder: "${folderName}"\n\n` +
+                            `Please enter the FULL path to this folder:\n` +
+                            `(e.g., /Users/yourname/Music/${folderName} or C:\\Users\\yourname\\Music\\${folderName})`,
+                            ''
+                        );
+
+                        if (fullPath) {
+                            input.value = fullPath;
+                            localStorage.setItem('liveLibraryPath', fullPath);
+                        }
+                        break;
+                    }
+                }
+            }
+        }
+    }, false);
+}
+
+/**
+ * Handle path validation
+ */
+async function handleValidatePath() {
+    const liveLibraryPath = document.getElementById('liveLibraryPath').value.trim();
+    const statusEl = document.getElementById('pathValidationStatus');
+
+    if (!liveLibraryPath) {
+        showPathValidationStatus('error', 'Please enter a live library path');
+        return;
+    }
+
+    // Save to localStorage
+    localStorage.setItem('liveLibraryPath', liveLibraryPath);
+
+    statusEl.style.display = 'block';
+    statusEl.className = 'connection-status info';
+    statusEl.textContent = 'Validating path...';
+
+    try {
+        const response = await fetch('http://localhost:3000/api/organizer/validate-path', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ path: liveLibraryPath })
+        });
+
+        const result = await response.json();
+
+        if (result.success && result.writable) {
+            showPathValidationStatus('success', '✓ Path is valid and writable');
+            addScanLog(`Live library path validated: ${liveLibraryPath}`, 'success');
+        } else if (result.success && !result.writable) {
+            showPathValidationStatus('error', '⚠ Path exists but is not writable');
+            addScanLog(`Live library path is not writable: ${liveLibraryPath}`, 'error');
+        } else {
+            showPathValidationStatus('error', `✗ ${result.error || 'Path validation failed'}`);
+            addScanLog(`Path validation failed: ${result.error}`, 'error');
+        }
+    } catch (error) {
+        showPathValidationStatus('error', `Error: ${error.message}`);
+        addScanLog(`Path validation error: ${error.message}`, 'error');
+    }
+}
+
+/**
+ * Show path validation status
+ */
+function showPathValidationStatus(type, message) {
+    const statusEl = document.getElementById('pathValidationStatus');
+    statusEl.style.display = 'block';
+    statusEl.className = `connection-status ${type}`;
+    statusEl.textContent = message;
+}
+
+/**
+ * Handle plan move (dry-run)
+ */
+async function handlePlanMove() {
+    const liveLibraryPath = document.getElementById('liveLibraryPath').value.trim();
+    const moveMode = document.querySelector('input[name="moveMode"]:checked').value;
+
+    if (!liveLibraryPath) {
+        showPathValidationStatus('error', 'Please enter a live library path');
+        return;
+    }
+
+    if (!renamePreviews || (!renamePreviews.auto_approve.length && !renamePreviews.review.length)) {
+        addScanLog('No renamed files to move. Please complete Phase 3.5 first.', 'error');
+        return;
+    }
+
+    const planBtn = document.getElementById('planMoveBtn');
+    planBtn.disabled = true;
+    planBtn.textContent = 'Planning...';
+
+    try {
+        // Combine auto_approve and review files
+        const filesToMove = [...renamePreviews.auto_approve, ...renamePreviews.review];
+
+        const response = await fetch('http://localhost:3000/api/organizer/plan-move', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                files: filesToMove,
+                liveLibraryPath,
+                plexTracks: plexTracks || null,
+                mode: moveMode
+            })
+        });
+
+        const result = await response.json();
+
+        if (result.success) {
+            movePlan = result.plan;
+            displayMovePlan(movePlan);
+            document.getElementById('movePlanContainer').style.display = 'block';
+            addScanLog(`Move plan generated: ${movePlan.summary.newFiles + movePlan.summary.upgrades} files will be moved`, 'success');
+        } else {
+            addScanLog(`Plan error: ${result.error}`, 'error');
+        }
+    } catch (error) {
+        addScanLog(`Plan error: ${error.message}`, 'error');
+    } finally {
+        planBtn.disabled = false;
+        planBtn.textContent = '🔍 Plan Move (Dry-Run)';
+    }
+}
+
+/**
+ * Display move plan preview
+ */
+function displayMovePlan(plan) {
+    // Update summary statistics
+    document.getElementById('planStatNewFiles').textContent = plan.summary.newFiles;
+    document.getElementById('planStatUpgrades').textContent = plan.summary.upgrades;
+    document.getElementById('planStatDowngrades').textContent = plan.summary.downgrades;
+    document.getElementById('planStatSameQuality').textContent = plan.summary.sameQuality;
+
+    // Display operations to be performed
+    const planList = document.getElementById('movePlanList');
+    let html = '';
+
+    // Show new files
+    for (const op of plan.newFiles.slice(0, 20)) {
+        html += `
+            <div class="rename-preview-item">
+                <div class="rename-preview-path original">
+                    <strong>Source:</strong> ${op.sourcePath}
+                </div>
+                <div class="rename-preview-arrow">↓ ADD</div>
+                <div class="rename-preview-path proposed">
+                    <strong>Destination:</strong> ${op.destinationPath}
+                </div>
+            </div>
+        `;
+    }
+
+    // Show upgrades
+    for (const op of plan.upgrades.slice(0, 20)) {
+        html += `
+            <div class="rename-preview-item">
+                <div class="rename-preview-path original">
+                    <strong>Source:</strong> ${op.sourcePath}
+                </div>
+                <div class="rename-preview-arrow">↓ REPLACE (Quality Upgrade)</div>
+                <div class="rename-preview-path proposed">
+                    <strong>Destination:</strong> ${op.destinationPath}
+                </div>
+            </div>
+        `;
+    }
+
+    // Show downgrades (will be skipped)
+    for (const op of plan.downgrades.slice(0, 10)) {
+        html += `
+            <div class="rename-preview-item" style="opacity: 0.6;">
+                <div class="rename-preview-path original">
+                    <strong>Source:</strong> ${op.sourcePath}
+                </div>
+                <div class="rename-preview-arrow">⏭️ SKIP (Quality Downgrade)</div>
+                <div class="rename-preview-path proposed">
+                    <strong>Reason:</strong> ${op.reason}
+                </div>
+            </div>
+        `;
+    }
+
+    const totalShown = Math.min(20, plan.newFiles.length + plan.upgrades.length) + Math.min(10, plan.downgrades.length);
+    const totalOperations = plan.newFiles.length + plan.upgrades.length + plan.downgrades.length + plan.sameQuality.length;
+
+    if (totalOperations > totalShown) {
+        html += `<div class="no-results">... and ${totalOperations - totalShown} more operations</div>`;
+    }
+
+    planList.innerHTML = html;
+}
+
+/**
+ * Handle execute move
+ */
+async function handleExecuteMove() {
+    if (!movePlan) {
+        addScanLog('No move plan available. Please click "Plan Move" first.', 'error');
+        return;
+    }
+
+    const confirmed = confirm(
+        `You are about to move ${movePlan.summary.newFiles + movePlan.summary.upgrades} files to your live Plex library.\n\n` +
+        `This operation will:\n` +
+        `- Add ${movePlan.summary.newFiles} new files\n` +
+        `- Replace ${movePlan.summary.upgrades} files with higher quality versions\n` +
+        `- Skip ${movePlan.summary.downgrades + movePlan.summary.sameQuality} duplicates/downgrades\n\n` +
+        `Do you want to proceed?`
+    );
+
+    if (!confirmed) return;
+
+    const executeBtn = document.getElementById('executeMoveBtn');
+    const progressContainer = document.getElementById('moveProgressContainer');
+    const progressText = document.getElementById('moveProgressText');
+    const progressBar = document.getElementById('moveProgressBar');
+    const resultsContainer = document.getElementById('moveResultsContainer');
+
+    executeBtn.disabled = true;
+    progressContainer.style.display = 'block';
+    resultsContainer.style.display = 'none';
+
+    // Combine operations to execute (new files + upgrades)
+    const operationsToExecute = [...movePlan.newFiles, ...movePlan.upgrades];
+
+    try {
+        const response = await fetch('http://localhost:3000/api/organizer/execute-move', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                operations: operationsToExecute,
+                dryRun: false
+            })
+        });
+
+        const reader = response.body.getReader();
+        const decoder = new TextDecoder();
+
+        while (true) {
+            const { done, value } = await reader.read();
+            if (done) break;
+
+            const chunk = decoder.decode(value);
+            const lines = chunk.split('\n');
+
+            for (const line of lines) {
+                if (line.startsWith('data: ')) {
+                    try {
+                        const data = JSON.parse(line.slice(6));
+
+                        if (data.type === 'progress') {
+                            progressText.textContent = `Moving ${data.currentFile || ''}... (${data.processed}/${data.total})`;
+                            progressBar.style.width = `${data.progress}%`;
+                        } else if (data.type === 'complete') {
+                            console.log('[Move] Move complete:', data);
+                            moveResults = data.results;
+
+                            progressText.textContent = data.message;
+                            progressBar.style.width = '100%';
+
+                            // Display results
+                            displayMoveResults(data.results);
+                            resultsContainer.style.display = 'block';
+
+                            addScanLog(data.message, 'success');
+                        } else if (data.type === 'error') {
+                            progressText.textContent = `Error: ${data.error}`;
+                            addScanLog(`Move error: ${data.error}`, 'error');
+                        }
+                    } catch (parseError) {
+                        console.error('[Move] Parse error:', parseError);
+                    }
+                }
+            }
+        }
+    } catch (error) {
+        console.error('[Move] Move error:', error);
+        progressText.textContent = `Error: ${error.message}`;
+        addScanLog(`Move error: ${error.message}`, 'error');
+    } finally {
+        executeBtn.disabled = false;
+    }
+}
+
+/**
+ * Display move results
+ */
+function displayMoveResults(results) {
+    const resultsList = document.getElementById('moveResultsList');
+
+    if (!results || results.length === 0) {
+        resultsList.innerHTML = '<div class="no-results">No results to display</div>';
+        return;
+    }
+
+    let html = '';
+
+    for (const result of results) {
+        const statusClass = result.status.includes('success') ? 'success' : result.status === 'error' ? 'error' : 'skipped';
+        const icon = statusClass === 'success' ? '✅' : statusClass === 'error' ? '❌' : '⏭️';
+
+        const actionText = result.action === 'REPLACE' ? 'Replaced (upgrade)' : result.action || result.status;
+
+        html += `
+            <div class="rename-result-item ${statusClass}">
+                <span>${icon}</span>
+                <span><strong>${actionText}:</strong> ${result.destinationPath || result.sourcePath}</span>
+            </div>
+        `;
+    }
+
+    resultsList.innerHTML = html;
+}
+
+/**
+ * Handle cancel plan
+ */
+function handleCancelPlan() {
+    movePlan = null;
+    document.getElementById('movePlanContainer').style.display = 'none';
+    addScanLog('Move plan cancelled', 'info');
+}
+
+/**
+ * Handle rollback
+ */
+async function handleRollback() {
+    const confirmed = confirm(
+        'This will attempt to undo the last move operation.\n\n' +
+        'Note: Deleted files (from quality upgrades) cannot be restored.\n\n' +
+        'Do you want to proceed?'
+    );
+
+    if (!confirmed) return;
+
+    const rollbackBtn = document.getElementById('rollbackMoveBtn');
+    rollbackBtn.disabled = true;
+    rollbackBtn.textContent = 'Rolling back...';
+
+    try {
+        const response = await fetch('http://localhost:3000/api/organizer/rollback', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' }
+        });
+
+        const result = await response.json();
+
+        if (result.success) {
+            addScanLog(`Rollback complete: ${result.summary.restored} files restored, ${result.summary.deleted} files deleted`, 'success');
+            alert(`Rollback completed.\n\nRestored: ${result.summary.restored}\nDeleted: ${result.summary.deleted}\nFailed: ${result.summary.failed}`);
+        } else {
+            addScanLog(`Rollback error: ${result.error}`, 'error');
+        }
+    } catch (error) {
+        addScanLog(`Rollback error: ${error.message}`, 'error');
+    } finally {
+        rollbackBtn.disabled = false;
+        rollbackBtn.textContent = '↩️ Rollback Last Move';
+    }
+}
+
+/**
+ * Handle trigger Plex refresh
+ */
+async function handleTriggerPlexRefresh() {
+    if (!plexConnectionData || !selectedLibraryId) {
+        addScanLog('Plex connection data not available. Please complete Phase 2.5 first.', 'error');
+        return;
+    }
+
+    const { serverIp, port, token } = plexConnectionData;
+    const refreshBtn = document.getElementById('triggerPlexRefreshBtn');
+    refreshBtn.disabled = true;
+    refreshBtn.textContent = 'Refreshing...';
+
+    try {
+        const response = await fetch('http://localhost:3000/api/organizer/plex-refresh', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ serverIp, port, token, libraryId: selectedLibraryId })
+        });
+
+        const result = await response.json();
+
+        if (result.success) {
+            addScanLog('Plex library refresh triggered successfully', 'success');
+            alert('Plex library refresh triggered! Your Plex server will now scan for new files.');
+        } else {
+            addScanLog(`Plex refresh error: ${result.message}`, 'error');
+        }
+    } catch (error) {
+        addScanLog(`Plex refresh error: ${error.message}`, 'error');
+    } finally {
+        refreshBtn.disabled = false;
+        refreshBtn.textContent = '🔄 Trigger Plex Refresh';
+    }
+}
+
+/**
+ * Reset move section for new operation
+ */
+function resetMoveSection() {
+    movePlan = null;
+    moveResults = null;
+    document.getElementById('movePlanContainer').style.display = 'none';
+    document.getElementById('moveProgressContainer').style.display = 'none';
+    document.getElementById('moveResultsContainer').style.display = 'none';
+    document.getElementById('pathValidationStatus').style.display = 'none';
+    addScanLog('Move section reset', 'info');
 }
 
 // Register the organizer route

@@ -301,7 +301,7 @@ export async function fetchLibraryTracks(serverIp, port, token, libraryId, progr
 /**
  * Calculate quality score for a track
  */
-function calculateQualityScore(codec, bitrate) {
+export function calculateQualityScore(codec, bitrate) {
     if (!codec) return 0;
 
     const codecLower = codec.toLowerCase();

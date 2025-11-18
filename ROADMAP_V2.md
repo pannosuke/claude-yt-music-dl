@@ -80,8 +80,8 @@ claude-yt-music-dl/
 │       ├── plex.js             ✅ Complete (Phase 2.5)
 │       ├── musicbrainz.js      ✅ Complete (Phase 3)
 │       ├── matcher.js          ✅ Complete (Phase 3.5)
-│       └── organizer.js        ⏳ Planned (Phase 4)
-├── server.js                   ✅ Complete (Phases 1-3.5)
+│       └── organizer.js        ✅ Complete (Phase 4 Backend)
+├── server.js                   ✅ Complete (Phases 1-4 Backend)
 ├── package.json                ✅ Updated to v2.0.0
 └── ROADMAP_V2.md               ✅ This file
 ```
@@ -666,8 +666,8 @@ YOASOBI/THE BOOK (2021)/03 - 夜に駆ける.flac
 
 ---
 
-### ⏳ Phase 4: Move to Live Plex Library (PLANNED)
-**Status:** Not Started
+### 🔄 Phase 4: Move to Live Plex Library (IN PROGRESS)
+**Status:** 60% Complete - Backend Done, Frontend Pending
 **Estimated Time:** 3-4 hours
 
 **Goals:**
@@ -697,29 +697,30 @@ Live Plex Library: Ready for playback
 **Tasks:**
 
 **Backend (modules/organizer/organizer.js):**
-- [ ] Create `modules/organizer/organizer.js` backend module
-- [ ] Add live library path configuration (from frontend settings)
-- [ ] Implement safe move/copy functions
-  - [ ] Support both move and copy modes
-  - [ ] Handle filename conflicts (add suffix like `(1)`, `(2)`)
-  - [ ] Sanitize filenames (remove invalid OS characters)
-  - [ ] Preserve file permissions and timestamps
-- [ ] Create `/api/organizer/move-to-library` endpoint (SSE progress)
-  - [ ] Input: Array of renamed files + live library path + move/copy mode
-  - [ ] Output: SSE stream with progress updates
-  - [ ] Dry-run mode support (preview without actual move)
-- [ ] Implement quality upgrade logic
-  - [ ] Check if file already exists in live library
-  - [ ] Compare quality (using Phase 2.5 quality ranking)
-  - [ ] If upgrade: Delete old file, move new file
-  - [ ] If downgrade: Skip with warning
-- [ ] Add rollback capability
-  - [ ] Log all move operations (source → destination)
-  - [ ] Create `/api/organizer/rollback` endpoint
-  - [ ] Undo last batch of moves
-- [ ] Optional: Plex library refresh trigger
-  - [ ] POST to `/library/sections/{id}/refresh` endpoint
-  - [ ] Requires Plex server IP, port, token (from Phase 2.5)
+- [x] Create `modules/organizer/organizer.js` backend module
+- [x] Add live library path configuration (from frontend settings)
+- [x] Implement safe move/copy functions
+  - [x] Support both move and copy modes
+  - [x] Handle filename conflicts (add suffix like `(1)`, `(2)`)
+  - [x] Sanitize filenames (remove invalid OS characters)
+  - [x] Preserve file permissions and timestamps
+- [x] Create `/api/organizer/*` endpoints (SSE progress)
+  - [x] `/api/organizer/validate-path` - Path validation
+  - [x] `/api/organizer/plan-move` - Move planning with dry-run
+  - [x] `/api/organizer/execute-move` - SSE progress stream
+  - [x] Dry-run mode support (preview without actual move)
+- [x] Implement quality upgrade logic
+  - [x] Check if file already exists in live library
+  - [x] Compare quality (using Phase 2.5 quality ranking)
+  - [x] If upgrade: Delete old file, move new file
+  - [x] If downgrade: Skip with warning
+- [x] Add rollback capability
+  - [x] Log all move operations (source → destination)
+  - [x] Create `/api/organizer/rollback` endpoint
+  - [x] Undo last batch of moves
+- [x] Optional: Plex library refresh trigger
+  - [x] POST to `/library/sections/{id}/refresh` endpoint
+  - [x] Requires Plex server IP, port, token (from Phase 2.5)
 
 **Frontend (public/js/organizer.js):**
 - [ ] Add live library path input field (with drag-and-drop support)

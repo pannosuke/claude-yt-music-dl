@@ -552,6 +552,137 @@
                     </div>
                 </div>
             </div>
+
+            <!-- Move to Live Plex Library Section (Phase 4) -->
+            <div id="moveToLibrarySection" class="results-section" style="display: none; margin-top: 30px;">
+                <div class="section-header">
+                    <h2>📦 Move to Live Plex Library</h2>
+                    <p class="subtitle">Move/copy renamed files from staging to your live Plex Media Server library</p>
+                </div>
+
+                <!-- Configuration Panel -->
+                <div class="card">
+                    <h3>Live Library Configuration</h3>
+
+                    <form id="liveLibraryForm">
+                        <div class="form-group">
+                            <label for="liveLibraryPath">Live Library Path *</label>
+                            <input
+                                type="text"
+                                id="liveLibraryPath"
+                                name="liveLibraryPath"
+                                value=""
+                                placeholder="/path/to/live/plex/library or C:\Plex\Music"
+                                required
+                            >
+                            <small style="color: #666; font-size: 12px; display: block; margin-top: 5px;">
+                                💡 Tip: You can drag your Plex music folder here, or copy/paste the path
+                            </small>
+                            <div id="pathValidationStatus" class="connection-status" style="display: none; margin-top: 10px;"></div>
+                        </div>
+
+                        <div class="form-group">
+                            <label>Operation Mode</label>
+                            <div style="display: flex; gap: 20px; margin-top: 10px;">
+                                <label style="display: flex; align-items: center; cursor: pointer;">
+                                    <input type="radio" name="moveMode" value="copy" checked style="margin-right: 8px;">
+                                    <div>
+                                        <strong>Copy</strong>
+                                        <div style="font-size: 12px; color: #64748b;">Keep original files in staging</div>
+                                    </div>
+                                </label>
+                                <label style="display: flex; align-items: center; cursor: pointer;">
+                                    <input type="radio" name="moveMode" value="move" style="margin-right: 8px;">
+                                    <div>
+                                        <strong>Move</strong>
+                                        <div style="font-size: 12px; color: #64748b;">Delete from staging after move</div>
+                                    </div>
+                                </label>
+                            </div>
+                        </div>
+
+                        <div class="button-group">
+                            <button type="button" id="validatePathBtn" class="button-secondary">
+                                Validate Path
+                            </button>
+                            <button type="button" id="planMoveBtn" class="button-primary">
+                                🔍 Plan Move (Dry-Run)
+                            </button>
+                        </div>
+                    </form>
+                </div>
+
+                <!-- Move Plan Preview -->
+                <div id="movePlanContainer" class="card" style="display: none; margin-top: 20px;">
+                    <h3>Move Plan Preview</h3>
+                    <p style="color: #64748b; font-size: 14px; margin-bottom: 15px;">
+                        Review what will happen when you execute the move. No files will be modified until you click "Execute Move".
+                    </p>
+
+                    <!-- Plan Summary Stats -->
+                    <div class="comparison-stats-grid" style="margin-bottom: 20px;">
+                        <div class="comparison-stat-card safe">
+                            <div class="label">New Files</div>
+                            <div class="value" id="planStatNewFiles">0</div>
+                            <div class="desc">Not in Plex yet</div>
+                        </div>
+                        <div class="comparison-stat-card upgrade">
+                            <div class="label">Quality Upgrades</div>
+                            <div class="value" id="planStatUpgrades">0</div>
+                            <div class="desc">Will replace lower quality</div>
+                        </div>
+                        <div class="comparison-stat-card downgrade">
+                            <div class="label">Quality Downgrades</div>
+                            <div class="value" id="planStatDowngrades">0</div>
+                            <div class="desc">Will skip (lower quality)</div>
+                        </div>
+                        <div class="comparison-stat-card duplicate">
+                            <div class="label">Same Quality</div>
+                            <div class="value" id="planStatSameQuality">0</div>
+                            <div class="desc">Will skip (duplicates)</div>
+                        </div>
+                    </div>
+
+                    <!-- Detailed Plan Preview List -->
+                    <div id="movePlanList" class="rename-preview-list"></div>
+
+                    <div class="button-group" style="margin-top: 20px;">
+                        <button type="button" id="executeMoveBtn" class="button-primary">
+                            ✅ Execute Move
+                        </button>
+                        <button type="button" id="cancelPlanBtn" class="button-secondary">
+                            Cancel
+                        </button>
+                    </div>
+                </div>
+
+                <!-- Move Progress -->
+                <div id="moveProgressContainer" style="display: none; margin-top: 20px;">
+                    <h3>Move Progress</h3>
+                    <div class="progress-text" id="moveProgressText">Initializing...</div>
+                    <div class="progress-bar-bg">
+                        <div class="progress-bar" id="moveProgressBar"></div>
+                    </div>
+                </div>
+
+                <!-- Move Results -->
+                <div id="moveResultsContainer" class="card" style="display: none; margin-top: 20px;">
+                    <h3>Move Results</h3>
+                    <div id="moveResultsList" class="rename-results-list"></div>
+
+                    <div class="button-group" style="margin-top: 20px;">
+                        <button type="button" id="rollbackMoveBtn" class="button-danger">
+                            ↩️ Rollback Last Move
+                        </button>
+                        <button type="button" id="triggerPlexRefreshBtn" class="button-secondary">
+                            🔄 Trigger Plex Refresh
+                        </button>
+                        <button type="button" id="newMoveBtn" class="button-primary">
+                            New Move Operation
+                        </button>
+                    </div>
+                </div>
+            </div>
         </div>
     </div>
 

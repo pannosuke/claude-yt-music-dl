@@ -10,6 +10,7 @@ import { scanDirectory, scanLibraryStructure, groupByArtist, generateScanSummary
 import { testConnection, getLibraries, fetchLibraryTracks, compareWithPlex } from './modules/organizer/plex.js';
 import { searchArtist, searchRelease, searchRecording, getReleaseDetails, getCacheStats } from './modules/organizer/musicbrainz.js';
 import { batchMatchFiles, generateRenamePreviews, executeRename, getMatchStatistics } from './modules/organizer/matcher.js';
+import { validatePath, isPathWritable, planMoveOperations, executeMoveOperations, rollbackLastOperation, triggerPlexRefresh } from './modules/organizer/organizer.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -1053,6 +1054,234 @@ app.post('/api/matcher/execute-rename', async (req, res) => {
       error: error.message
     })}\n\n`);
     res.end();
+  }
+});
+
+// ========================================
+// ORGANIZER ENDPOINTS (Phase 4)
+// ========================================
+
+/**
+ * POST /api/organizer/validate-path
+ * Validate that a path exists and is writable
+ */
+app.post('/api/organizer/validate-path', async (req, res) => {
+  log('=== VALIDATE PATH REQUEST ===', 'INFO');
+
+  const { path: dirPath } = req.body;
+
+  if (!dirPath) {
+    return res.status(400).json({
+      success: false,
+      error: 'Path is required'
+    });
+  }
+
+  try {
+    validatePath(dirPath);
+    const writable = await isPathWritable(dirPath);
+
+    res.json({
+      success: true,
+      exists: true,
+      writable,
+      message: writable ? 'Path is valid and writable' : 'Path exists but is not writable'
+    });
+  } catch (error) {
+    log(`Path validation error: ${error.message}`, 'ERROR');
+    res.json({
+      success: false,
+      exists: false,
+      writable: false,
+      error: error.message
+    });
+  }
+});
+
+/**
+ * POST /api/organizer/plan-move
+ * Plan move operations with quality checks
+ */
+app.post('/api/organizer/plan-move', async (req, res) => {
+  log('=== PLAN MOVE REQUEST ===', 'INFO');
+
+  const { files, liveLibraryPath, plexTracks, mode = 'copy' } = req.body;
+
+  if (!files || !Array.isArray(files)) {
+    return res.status(400).json({
+      success: false,
+      error: 'Missing or invalid files array'
+    });
+  }
+
+  if (!liveLibraryPath) {
+    return res.status(400).json({
+      success: false,
+      error: 'Missing live library path'
+    });
+  }
+
+  try {
+    // Validate path
+    validatePath(liveLibraryPath);
+    const writable = await isPathWritable(liveLibraryPath);
+
+    if (!writable) {
+      return res.status(400).json({
+        success: false,
+        error: 'Live library path is not writable'
+      });
+    }
+
+    log(`Planning move for ${files.length} files (mode: ${mode})`, 'INFO');
+
+    const plan = planMoveOperations(files, liveLibraryPath, plexTracks, mode);
+
+    log(`Move plan: ${plan.summary.newFiles} new, ${plan.summary.upgrades} upgrades, ${plan.summary.downgrades} downgrades`, 'INFO');
+
+    res.json({
+      success: true,
+      plan
+    });
+
+  } catch (error) {
+    log(`Plan move error: ${error.message}`, 'ERROR');
+    res.status(500).json({
+      success: false,
+      error: error.message
+    });
+  }
+});
+
+/**
+ * POST /api/organizer/execute-move
+ * Execute move operations with SSE progress
+ */
+app.post('/api/organizer/execute-move', async (req, res) => {
+  log('=== EXECUTE MOVE REQUEST ===', 'INFO');
+
+  const { operations, dryRun = true } = req.body;
+
+  if (!operations || !Array.isArray(operations)) {
+    return res.status(400).json({
+      success: false,
+      error: 'Missing or invalid operations array'
+    });
+  }
+
+  log(`Executing move for ${operations.length} operations (dryRun: ${dryRun})`, 'INFO');
+
+  // Set up SSE
+  res.setHeader('Content-Type', 'text/event-stream');
+  res.setHeader('Cache-Control', 'no-cache');
+  res.setHeader('Connection', 'keep-alive');
+
+  try {
+    const results = await executeMoveOperations(operations, dryRun, (progress) => {
+      // Send progress updates via SSE
+      res.write(`data: ${JSON.stringify({
+        type: 'progress',
+        ...progress
+      })}\n\n`);
+    });
+
+    // Calculate statistics
+    const successCount = results.filter(r => r.status === 'success' || r.status === 'success_dry_run').length;
+    const errorCount = results.filter(r => r.status === 'error').length;
+    const skippedCount = results.filter(r => r.status === 'skipped').length;
+
+    // Send completion message
+    res.write(`data: ${JSON.stringify({
+      type: 'complete',
+      results: results,
+      summary: {
+        total: results.length,
+        success: successCount,
+        errors: errorCount,
+        skipped: skippedCount
+      },
+      message: dryRun
+        ? `[DRY RUN] Preview complete: ${successCount} files would be moved`
+        : `Move complete: ${successCount} files moved successfully, ${errorCount} errors`
+    })}\n\n`);
+
+    res.end();
+    log(`Move execution complete: ${successCount} success, ${errorCount} errors, ${skippedCount} skipped`, 'INFO');
+
+  } catch (error) {
+    log(`Execute move error: ${error.message}`, 'ERROR');
+    res.write(`data: ${JSON.stringify({
+      type: 'error',
+      error: error.message
+    })}\n\n`);
+    res.end();
+  }
+});
+
+/**
+ * POST /api/organizer/rollback
+ * Rollback last move operation
+ */
+app.post('/api/organizer/rollback', async (req, res) => {
+  log('=== ROLLBACK REQUEST ===', 'INFO');
+
+  try {
+    const results = await rollbackLastOperation();
+
+    const successCount = results.filter(r => r.success).length;
+    const failedCount = results.filter(r => !r.success).length;
+
+    log(`Rollback complete: ${successCount} operations restored, ${failedCount} failed`, 'INFO');
+
+    res.json({
+      success: true,
+      results,
+      summary: {
+        total: results.length,
+        restored: successCount,
+        failed: failedCount
+      },
+      message: `Rollback complete: ${successCount} operations restored`
+    });
+
+  } catch (error) {
+    log(`Rollback error: ${error.message}`, 'ERROR');
+    res.status(500).json({
+      success: false,
+      error: error.message
+    });
+  }
+});
+
+/**
+ * POST /api/organizer/plex-refresh
+ * Trigger Plex library refresh
+ */
+app.post('/api/organizer/plex-refresh', async (req, res) => {
+  log('=== PLEX REFRESH REQUEST ===', 'INFO');
+
+  const { serverIp, port, token, libraryId } = req.body;
+
+  if (!serverIp || !port || !token || !libraryId) {
+    return res.status(400).json({
+      success: false,
+      error: 'Server IP, port, token, and library ID are required'
+    });
+  }
+
+  try {
+    const result = await triggerPlexRefresh(serverIp, port, token, libraryId);
+
+    log('Plex library refresh triggered successfully', 'INFO');
+
+    res.json(result);
+
+  } catch (error) {
+    log(`Plex refresh error: ${error.message}`, 'ERROR');
+    res.status(500).json({
+      success: false,
+      error: error.message
+    });
   }
 });
 
