@@ -14,12 +14,149 @@ import { promises as fs } from 'fs';
 const AUDIO_EXTENSIONS = ['flac', 'mp3', 'm4a', 'aac', 'ogg', 'opus', 'wav', 'wma'];
 
 /**
+ * Quick scan of library structure (directories only, no metadata reading)
+ * Used for initial planning - shows artists, albums, and loose files grouped alphabetically
+ * @param {string} musicPath - Path to music directory
+ * @param {Function} progressCallback - Callback for progress updates
+ * @param {Object} options - Scan options (signal for cancellation)
+ * @returns {Promise<Object>} Structure summary with alphabetical grouping
+ */
+export async function scanLibraryStructure(musicPath, progressCallback = () => {}, options = {}) {
+    const { signal = null } = options;
+
+    try {
+        // Verify directory exists
+        await fs.access(musicPath);
+
+        progressCallback({
+            status: 'Scanning library structure...',
+            progress: 10
+        });
+
+        // Read top-level directories (artists)
+        const entries = await fs.readdir(musicPath, { withFileTypes: true });
+
+        if (signal && signal.aborted) {
+            throw new Error('Scan cancelled');
+        }
+
+        const structure = {
+            artists: [],
+            totalAlbums: 0,
+            totalLooseFiles: 0,
+            groupedByLetter: {}
+        };
+
+        progressCallback({
+            status: `Found ${entries.length} top-level entries, analyzing structure...`,
+            progress: 20
+        });
+
+        // Process each artist directory
+        for (let i = 0; i < entries.length; i++) {
+            if (signal && signal.aborted) {
+                throw new Error('Scan cancelled');
+            }
+
+            const entry = entries[i];
+
+            // Skip files at root level and hidden directories
+            if (!entry.isDirectory() || entry.name.startsWith('.')) {
+                continue;
+            }
+
+            const artistName = entry.name;
+            const artistPath = path.join(musicPath, artistName);
+
+            // Count albums and loose files in this artist folder
+            const artistContents = await fs.readdir(artistPath, { withFileTypes: true });
+            let albumCount = 0;
+            let looseFileCount = 0;
+            const albums = [];
+
+            for (const item of artistContents) {
+                if (item.isDirectory() && !item.name.startsWith('.')) {
+                    albumCount++;
+                    albums.push(item.name);
+                } else if (item.isFile()) {
+                    // Check if it's an audio file
+                    const ext = path.extname(item.name).slice(1).toLowerCase();
+                    if (AUDIO_EXTENSIONS.includes(ext)) {
+                        looseFileCount++;
+                    }
+                }
+            }
+
+            // Add to structure
+            const artistData = {
+                name: artistName,
+                path: artistPath,
+                albumCount,
+                looseFileCount,
+                albums
+            };
+
+            structure.artists.push(artistData);
+            structure.totalAlbums += albumCount;
+            structure.totalLooseFiles += looseFileCount;
+
+            // Group by first letter
+            let firstChar = artistName.charAt(0).toUpperCase();
+            if (!/[A-Z]/.test(firstChar)) {
+                firstChar = '#';
+            }
+
+            if (!structure.groupedByLetter[firstChar]) {
+                structure.groupedByLetter[firstChar] = {
+                    letter: firstChar,
+                    artists: [],
+                    artistCount: 0,
+                    albumCount: 0,
+                    looseFileCount: 0
+                };
+            }
+
+            structure.groupedByLetter[firstChar].artists.push(artistData);
+            structure.groupedByLetter[firstChar].artistCount++;
+            structure.groupedByLetter[firstChar].albumCount += albumCount;
+            structure.groupedByLetter[firstChar].looseFileCount += looseFileCount;
+
+            // Update progress
+            if ((i + 1) % 10 === 0 || i === entries.length - 1) {
+                const progress = Math.min(20 + Math.round((i + 1) / entries.length * 70), 90);
+                progressCallback({
+                    status: `Analyzed ${i + 1} of ${entries.length} artists...`,
+                    progress
+                });
+            }
+        }
+
+        progressCallback({
+            status: `Structure scan complete: ${structure.artists.length} artists, ${structure.totalAlbums} albums, ${structure.totalLooseFiles} loose files`,
+            progress: 100
+        });
+
+        return structure;
+
+    } catch (error) {
+        if (error.code === 'ENOENT') {
+            throw new Error(`Directory not found: ${musicPath}`);
+        } else if (error.code === 'EACCES') {
+            throw new Error(`Permission denied: ${musicPath}`);
+        }
+        throw error;
+    }
+}
+
+/**
  * Scan a directory for audio files
  * @param {string} musicPath - Path to music directory
  * @param {Function} progressCallback - Callback for progress updates
+ * @param {Object} options - Scan options (limit, artistLetters, signal, etc.)
  * @returns {Promise<Array>} Array of scanned file objects
  */
-export async function scanDirectory(musicPath, progressCallback = () => {}) {
+export async function scanDirectory(musicPath, progressCallback = () => {}, options = {}) {
+    const { limit = null, signal = null, artistLetters = null } = options;
     try {
         // Verify directory exists
         await fs.access(musicPath);
@@ -33,7 +170,7 @@ export async function scanDirectory(musicPath, progressCallback = () => {}) {
         const patterns = AUDIO_EXTENSIONS.map(ext => `**/*.${ext}`);
 
         // Scan for audio files
-        const files = await fg(patterns, {
+        let files = await fg(patterns, {
             cwd: musicPath,
             absolute: true,
             caseSensitiveMatch: false,
@@ -41,23 +178,56 @@ export async function scanDirectory(musicPath, progressCallback = () => {}) {
             stats: true
         });
 
+        // Filter by artist letters if specified
+        if (artistLetters && artistLetters.length > 0) {
+            const letterSet = new Set(artistLetters.map(l => l.toUpperCase()));
+            files = files.filter(file => {
+                const relativePath = path.relative(musicPath, file.path);
+                const pathParts = relativePath.split(path.sep);
+                if (pathParts.length > 0) {
+                    const artistFolder = pathParts[0];
+                    let firstChar = artistFolder.charAt(0).toUpperCase();
+                    if (!/[A-Z]/.test(firstChar)) {
+                        firstChar = '#';
+                    }
+                    return letterSet.has(firstChar);
+                }
+                return false;
+            });
+        }
+
+        // Apply limit if specified
+        const totalFiles = files.length;
+        const filesToProcess = limit ? files.slice(0, limit) : files;
+
         progressCallback({
-            status: `Found ${files.length} audio file(s)`,
-            filesFound: files.length,
+            status: limit && totalFiles > limit
+                ? `Found ${totalFiles} audio file(s), processing first ${limit} for testing`
+                : `Found ${totalFiles} audio file(s)`,
+            filesFound: totalFiles,
+            filesProcessing: filesToProcess.length,
             progress: 10
         });
 
-        if (files.length === 0) {
+        if (filesToProcess.length === 0) {
             return [];
         }
 
         // Process files and read metadata
         const scannedFiles = [];
-        const total = files.length;
+        const total = filesToProcess.length;
 
         for (let i = 0; i < total; i++) {
-            const filePath = files[i].path;
-            const fileStats = files[i].stats;
+            // Check if scan was cancelled
+            if (signal && signal.aborted) {
+                progressCallback({
+                    status: 'Scan cancelled by user',
+                    cancelled: true
+                });
+                throw new Error('Scan cancelled');
+            }
+            const filePath = filesToProcess[i].path;
+            const fileStats = filesToProcess[i].stats;
 
             try {
                 const fileData = await processAudioFile(filePath, fileStats, musicPath);

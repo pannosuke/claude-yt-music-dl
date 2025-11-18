@@ -10,14 +10,30 @@ Version 2.0.0 transforms this application from a single-purpose YouTube Music do
 ## Project Goals
 
 ### Primary Objective
-Create a Plex Media Server-optimized music library organizer that automatically corrects folder structures, filenames, and metadata using public music databases (MusicBrainz).
+Create a comprehensive music management pipeline that downloads YouTube Music playlists OR processes existing offline music libraries, matches tracks against MusicBrainz metadata database, renames files to Plex standards, checks for duplicates/quality conflicts with live Plex library, and moves organized files to the live Plex library folder.
+
+### Two-Path Workflow
+
+**Path 1: YouTube Music Download**
+```
+YouTube Playlist → Download (FLAC) → Match MusicBrainz → Rename Files → Compare Plex Library → Move to Live Library
+```
+
+**Path 2: Offline Library Organization**
+```
+Offline Music Folder → Scan Files → Match MusicBrainz → Rename Files → Compare Plex Library → Move to Live Library
+```
+
+**End Goal:** Get all music (downloaded or existing) matched with accurate metadata, renamed to Plex standards, deduplicated against live Plex library, and moved to the live Plex library folder for seamless playback.
 
 ### Key Requirements
-- Support both Western and Japanese music databases
+- Support both Western and Japanese music databases (MusicBrainz)
 - Process large music libraries efficiently (chunked/alphabetical processing)
 - Maintain safety with dry-run mode and backup recommendations
 - Real-time progress updates via Server-Sent Events
 - Plex Media Server compatibility as the primary standard
+- Prevent duplicate additions and quality downgrades
+- Enable quality upgrades (replace MP3 with FLAC when available)
 
 ---
 
@@ -59,11 +75,12 @@ claude-yt-music-dl/
 │   └── index.html              ✅ Complete (Tab UI)
 ├── modules/
 │   ├── downloader/             📁 Created (unused)
-│   └── organizer/              📁 Created (empty)
-│       ├── scanner.js          ⏳ Planned
-│       ├── matcher.js          ⏳ Planned
-│       ├── organizer.js        ⏳ Planned
-│       └── cache.js            ⏳ Planned
+│   └── organizer/              📁 Created
+│       ├── scanner.js          ✅ Complete
+│       ├── plex.js             ✅ Complete
+│       ├── musicbrainz.js      ✅ Complete
+│       ├── matcher.js          ⏳ Planned (Phase 3.5)
+│       └── organizer.js        ⏳ Planned (Phase 4)
 ├── server.js                   ✅ Complete (v1.1.0)
 ├── package.json                ✅ Updated to v2.0.0
 └── ROADMAP_V2.md               ✅ This file
@@ -127,43 +144,326 @@ Music/
 
 ---
 
-### 🚧 Phase 2: File Scanning & Metadata Reading (IN PROGRESS)
-**Status:** Not Started
+### ✅ Phase 2: File Scanning & Metadata Reading (COMPLETE)
+**Status:** 100% Complete
 **Estimated Time:** 2-3 hours
+**Time Spent:** ~2 hours
+**Completed:** Nov 15, 2025
 
 **Goals:**
 - Scan music directory recursively for audio files
 - Read existing metadata from files (ID3/FLAC tags)
 - Extract folder structure and filenames
 - Identify files that need reorganization
+- Implement two-phase scanning (structure scan → deep scan)
+- Support alphabetical chunking by artist name
 
 **Tasks:**
-- [ ] Create `modules/organizer/scanner.js` backend module
-- [ ] Implement directory scanning with `fast-glob`
-- [ ] Read metadata using `music-metadata`
-- [ ] Identify Plex standard violations
-- [ ] Create `/api/scan` endpoint
-- [ ] Build organizer frontend form (directory input, scan button)
-- [ ] Display scan results in UI (total files, issues found)
-- [ ] Add SSE progress updates for scanning
+- [x] Create `modules/organizer/scanner.js` backend module
+- [x] Implement directory scanning with `fast-glob`
+- [x] Read metadata using `music-metadata`
+- [x] Identify Plex standard violations
+- [x] Create `/api/scan/structure` endpoint (Phase 1: quick structure scan)
+- [x] Create `/api/scan` endpoint (Phase 2: deep scan with metadata)
+- [x] Implement alphabetical grouping (A-Z, #)
+- [x] Add artist letter filtering for deep scans
+- [x] Build organizer frontend form (directory input, scan button)
+- [x] Add drag-and-drop support for folder path
+- [x] Display structure scan results with alphabetical grid
+- [x] Add letter selection UI (click to select/deselect)
+- [x] Add "Deep Scan Selected" and "Deep Scan All" buttons
+- [x] Add SSE progress updates for scanning
+- [x] Add cancel button for scanning operations
+- [x] Fix JSON serialization issues with large datasets
+- [x] Complete deep scan results display UI
+- [x] Add grouping by artist for scan results
+- [x] Display compliance issues breakdown
+- [x] Add file list with metadata preview (expandable by letter group)
 
 **Deliverables:**
-- Backend scanner module
-- API endpoint for scanning
-- Frontend scan interface
-- Progress tracking UI
+- ✅ Backend scanner module ([modules/organizer/scanner.js](modules/organizer/scanner.js:1))
+- ✅ API endpoints for structure scan and deep scan
+- ✅ Frontend structure scan interface with alphabetical grid
+- ✅ Progress tracking UI with SSE
+- ✅ Cancellation support with AbortController
+- ✅ Deep scan results display with expandable file lists
 
 **Success Criteria:**
-- Can scan directories with 1000+ files efficiently
-- Correctly identifies audio files (FLAC, MP3, M4A, etc.)
-- Extracts metadata without errors
-- Reports scan progress in real-time
+- ✅ Can scan directories with 1000+ files efficiently
+- ✅ Correctly identifies audio files (FLAC, MP3, M4A, etc.)
+- ✅ Extracts metadata without errors
+- ✅ Reports scan progress in real-time
+- ✅ Alphabetical grouping works correctly
+- ✅ Letter filtering for deep scan works
+- ✅ Deep scan results are displayed clearly with expandable details
 
 ---
 
-### ⏳ Phase 3: MusicBrainz API Integration (PLANNED)
-**Status:** Not Started
+### ✅ Phase 2.5: Plex Media Server Integration (COMPLETE)
+**Status:** 100% Complete
 **Estimated Time:** 3-4 hours
+**Time Spent:** ~3 hours
+**Completed:** Nov 17, 2025
+
+**Goals:**
+- Connect to Plex Media Server API to interrogate existing music library
+- Fetch all tracks with metadata (artist, album, title, codec, bitrate, file path)
+- Compare offline scanned files against Plex library for duplicate detection
+- Implement quality comparison logic (FLAC > ALAC > 320kbps MP3 > lower bitrates)
+- Provide conflict resolution UI for duplicates and quality downgrades
+
+**Why This Phase:**
+This phase bridges the gap between scanning the offline folder (Phase 2) and organizing files (Phase 4+). By interrogating the live Plex library first, we can:
+1. **Prevent duplicates** - Don't add tracks already in Plex
+2. **Prevent quality downgrades** - Don't replace FLAC with MP3
+3. **Enable smart upgrades** - Replace MP3 with FLAC when available
+4. **Future-proof for Module 3** - Lay groundwork for ratings/play count interrogation
+
+**Tasks:**
+
+**Backend (modules/organizer/plex.js):**
+- [x] Create `modules/organizer/plex.js` backend module
+- [x] Implement Plex authentication (X-Plex-Token)
+- [x] Add Plex server connection testing endpoint
+- [x] Fetch all library sections (identify Music library ID)
+- [x] Fetch all tracks from Music library with full metadata
+- [x] Parse track metadata (artist, album, title, year, track number)
+- [x] Extract media info (codec, bitrate, channels, sample rate)
+- [x] Extract file paths for each track
+- [x] Build in-memory index of Plex library (artist+album+title → track)
+- [x] Implement duplicate detection logic (fuzzy matching on metadata)
+- [x] Implement quality comparison logic with codec ranking
+- [x] Create `/api/plex/connect` endpoint (test connection)
+- [x] Create `/api/plex/libraries` endpoint (list music libraries)
+- [x] Create `/api/plex/fetch` endpoint (fetch library with SSE progress)
+- [x] Create `/api/plex/compare` endpoint (compare offline vs Plex)
+
+**Frontend (public/js/organizer.js):**
+- [x] Add Plex settings form fields (server IP, port, token)
+- [x] Add "Connect to Plex" button with connection testing
+- [x] Add "Fetch Plex Library" button
+- [x] Display Plex library statistics (total artists, albums, tracks)
+- [x] Add "Compare with Plex" button (after deep scan completes)
+- [x] Display comparison results with categorized conflicts:
+  - ✅ **Safe to Add** - Not in Plex library
+  - ⚠️ **Duplicates** - Already exists in Plex
+  - 🔼 **Quality Upgrades** - Better quality than Plex version
+  - 🔽 **Quality Downgrades** - Worse quality than Plex version
+- [x] Add conflict resolution UI with action buttons:
+  - "Keep Plex Version" (skip offline file)
+  - "Replace with New" (delete Plex, add offline)
+  - "Keep Both" (add as duplicate with suffix)
+  - "Skip File" (ignore for now)
+- [x] Save comparison results to localStorage for later review
+
+**Deliverables:**
+- Plex API integration module
+- Connection testing functionality
+- Library fetching with progress tracking
+- Duplicate detection engine
+- Quality comparison engine (codec ranking)
+- Conflict resolution UI
+
+**Success Criteria:**
+- Successfully connects to Plex Media Server
+- Fetches complete music library metadata
+- Detects exact duplicates (same artist/album/title)
+- Detects near-duplicates (fuzzy matching with Levenshtein distance)
+- Correctly ranks audio quality (FLAC > ALAC > MP3 320kbps > MP3 256kbps > MP3 128kbps)
+- Provides clear conflict resolution options
+- Does not accidentally delete or overwrite Plex library files
+
+**Plex API Endpoints Used:**
+
+1. **Test Connection:**
+   ```
+   GET http://{ip}:{port}/?X-Plex-Token={token}
+   Returns: Server info (name, version, platform)
+   ```
+
+2. **Get Library Sections:**
+   ```
+   GET http://{ip}:{port}/library/sections?X-Plex-Token={token}
+   Returns: List of libraries with IDs and types
+   Find: type="artist" for Music library
+   ```
+
+3. **Get All Tracks:**
+   ```
+   GET http://{ip}:{port}/library/sections/{sectionId}/all?X-Plex-Token={token}
+   Returns: XML/JSON with all tracks in library
+   Fields: title, originalTitle, grandparentTitle (artist), parentTitle (album),
+           index (track number), year, media array with codec/bitrate
+   ```
+
+4. **Get Track Metadata:**
+   ```
+   GET http://{ip}:{port}/library/metadata/{ratingKey}?X-Plex-Token={token}
+   Returns: Detailed metadata for specific track including file path via Media.Part.file
+   ```
+
+**Quality Ranking Algorithm:**
+
+```javascript
+const CODEC_QUALITY_RANK = {
+  'flac': 1000,        // Lossless - highest quality
+  'alac': 950,         // Apple Lossless
+  'ape': 900,          // Monkey's Audio (lossless)
+  'wav': 850,          // Uncompressed (large files)
+  'aiff': 840,         // Uncompressed (large files)
+  'mp3': (bitrate) => {
+    if (bitrate >= 320) return 700;
+    if (bitrate >= 256) return 600;
+    if (bitrate >= 192) return 500;
+    if (bitrate >= 128) return 400;
+    return 300;
+  },
+  'aac': (bitrate) => {
+    if (bitrate >= 256) return 680;
+    if (bitrate >= 192) return 580;
+    if (bitrate >= 128) return 480;
+    return 380;
+  },
+  'm4a': (bitrate) => { /* same as aac */ },
+  'ogg': (bitrate) => {
+    if (bitrate >= 320) return 650;
+    if (bitrate >= 192) return 550;
+    return 450;
+  },
+  'opus': (bitrate) => { /* same as ogg */ },
+  'wma': 200,          // Low quality
+};
+
+function compareQuality(fileA, fileB) {
+  const scoreA = calculateQualityScore(fileA.codec, fileA.bitrate);
+  const scoreB = calculateQualityScore(fileB.codec, fileB.bitrate);
+
+  if (scoreA > scoreB) return 'A_BETTER';      // fileA is higher quality
+  if (scoreB > scoreA) return 'B_BETTER';      // fileB is higher quality
+  return 'EQUAL';
+}
+```
+
+**Duplicate Detection Algorithm:**
+
+```javascript
+// Exact match
+function isExactDuplicate(offlineTrack, plexTrack) {
+  return normalizeString(offlineTrack.artist) === normalizeString(plexTrack.artist) &&
+         normalizeString(offlineTrack.album) === normalizeString(plexTrack.album) &&
+         normalizeString(offlineTrack.title) === normalizeString(plexTrack.title);
+}
+
+// Fuzzy match with Levenshtein distance
+function isFuzzyDuplicate(offlineTrack, plexTrack, threshold = 0.85) {
+  const artistSimilarity = levenshteinSimilarity(offlineTrack.artist, plexTrack.artist);
+  const albumSimilarity = levenshteinSimilarity(offlineTrack.album, plexTrack.album);
+  const titleSimilarity = levenshteinSimilarity(offlineTrack.title, plexTrack.title);
+
+  const avgSimilarity = (artistSimilarity + albumSimilarity + titleSimilarity) / 3;
+  return avgSimilarity >= threshold;
+}
+
+function normalizeString(str) {
+  return str.toLowerCase()
+    .replace(/[^\w\s]/g, '')  // Remove punctuation
+    .replace(/\s+/g, ' ')      // Normalize whitespace
+    .trim();
+}
+```
+
+**Conflict Categories:**
+
+1. **Safe to Add** (Green ✅)
+   - Track not found in Plex library
+   - Action: Proceed with organization and add to Plex
+
+2. **Exact Duplicate** (Yellow ⚠️)
+   - Exact metadata match in Plex
+   - Action: Skip file (don't add to Plex)
+
+3. **Quality Upgrade** (Blue 🔼)
+   - Duplicate exists but offline version is higher quality
+   - Example: Plex has MP3 128kbps, offline has FLAC
+   - Action: Offer to replace Plex version
+
+4. **Quality Downgrade** (Red 🔽)
+   - Duplicate exists but offline version is lower quality
+   - Example: Plex has FLAC, offline has MP3 128kbps
+   - Action: Warn user, recommend skipping
+
+5. **Same Quality Duplicate** (Yellow ⚠️)
+   - Duplicate with identical quality
+   - Action: Skip or keep both with filename suffix
+
+**UI Mockup:**
+
+```
+┌─────────────────────────────────────────────────────────────┐
+│ Plex Media Server Settings                                  │
+├─────────────────────────────────────────────────────────────┤
+│ Server IP:    [192.168.1.100      ] Port: [32400]          │
+│ X-Plex-Token: [************************]  [Test Connection]│
+│                                                             │
+│ Status: ✅ Connected to "MyPlexServer" (v1.40.1.8227)       │
+│                                                             │
+│ [Fetch Plex Library]  [Compare with Offline Scan]          │
+├─────────────────────────────────────────────────────────────┤
+│ Plex Library Stats:                                         │
+│ • 2,142 Artists                                             │
+│ • 8,456 Albums                                              │
+│ • 98,234 Tracks                                             │
+└─────────────────────────────────────────────────────────────┘
+
+┌─────────────────────────────────────────────────────────────┐
+│ Comparison Results                                          │
+├─────────────────────────────────────────────────────────────┤
+│ ✅ Safe to Add:           1,234 tracks                      │
+│ ⚠️  Exact Duplicates:       456 tracks                      │
+│ 🔼 Quality Upgrades:        89 tracks (MP3 → FLAC)         │
+│ 🔽 Quality Downgrades:      23 tracks (FLAC → MP3)         │
+│ ⚠️  Same Quality Dupes:     12 tracks                       │
+├─────────────────────────────────────────────────────────────┤
+│ [View Safe to Add] [Review Upgrades] [Review Downgrades]   │
+└─────────────────────────────────────────────────────────────┘
+
+┌─────────────────────────────────────────────────────────────┐
+│ Quality Upgrades (89 tracks)                                │
+├─────────────────────────────────────────────────────────────┤
+│ Artist Name - Album Name - Track Title                      │
+│ Plex: MP3 128kbps → Offline: FLAC 1411kbps                 │
+│ [Replace in Plex] [Keep Plex Version] [Skip]               │
+├─────────────────────────────────────────────────────────────┤
+│ ...                                                         │
+└─────────────────────────────────────────────────────────────┘
+```
+
+**Security & Safety:**
+- Never delete files from Plex library without explicit user confirmation
+- All Plex operations are read-only in Phase 2.5 (no writes to Plex database)
+- File replacement happens in Phase 5 (File Operations) with dry-run mode
+- Log all Plex API calls for debugging
+- Validate X-Plex-Token before making requests
+- Handle network errors gracefully
+
+**Dependencies:**
+- No new dependencies needed (use native `fetch` or `https` module)
+- Alternative: `@plex/plex-api` npm package (optional, for easier integration)
+
+**Future Enhancements (Post-Phase 2.5):**
+- Plex API write operations (delete tracks, trigger library refresh)
+- Fetch ratings, play counts, and user metadata
+- Support for multiple Plex libraries
+- Smart playlist integration
+- Automatic Plex library refresh after organization
+
+---
+
+### ✅ Phase 3: MusicBrainz API Integration (COMPLETE)
+**Status:** 100% Complete
+**Estimated Time:** 3-4 hours
+**Time Spent:** ~3 hours
+**Completed:** Nov 17, 2025
 
 **Goals:**
 - Integrate MusicBrainz API for metadata lookups
@@ -172,111 +472,339 @@ Music/
 - Cache results in SQLite database
 
 **Tasks:**
-- [ ] Create `modules/organizer/matcher.js` backend module
-- [ ] Implement MusicBrainz API client with rate limiting
-- [ ] Add AcoustID fingerprinting for accurate matching
-- [ ] Create SQLite cache database
-- [ ] Implement cache lookup/storage
-- [ ] Add confidence scoring for matches
-- [ ] Handle Japanese romanization
-- [ ] Create `/api/match` endpoint
+- [x] Create `modules/organizer/musicbrainz.js` backend module
+- [x] Implement MusicBrainz API client with rate limiting
+- [x] Create SQLite cache database with 30-day TTL
+- [x] Implement cache lookup/storage
+- [x] Add confidence scoring for matches (Levenshtein distance)
+- [x] Handle Japanese romanization (NFD normalization + diacritic removal)
+- [x] Create `/api/musicbrainz/search-artist` endpoint
+- [x] Create `/api/musicbrainz/search-release` endpoint
+- [x] Create `/api/musicbrainz/search-recording` endpoint
+- [x] Create `/api/musicbrainz/release-details` endpoint
+- [x] Create `/api/musicbrainz/cache-stats` endpoint
+- [x] Add frontend search UI for artist/release/recording
+- [x] Add result display with confidence badges
 
 **Deliverables:**
-- MusicBrainz integration module
-- SQLite caching system
-- Match confidence scoring algorithm
-- Japanese music support
+- ✅ MusicBrainz integration module ([modules/organizer/musicbrainz.js](modules/organizer/musicbrainz.js:1))
+- ✅ SQLite caching system (data/musicbrainz-cache.db)
+- ✅ Match confidence scoring algorithm (0-100% using Levenshtein distance)
+- ✅ Japanese music support (tested with YOASOBI)
+- ✅ Frontend search UI with forms and results display
+- ✅ 5 REST API endpoints
 
 **Success Criteria:**
-- Successfully queries MusicBrainz API
-- Respects 1 req/sec rate limit
-- Caches responses to minimize API calls
-- Matches Japanese music correctly
-- Confidence scores are accurate
+- ✅ Successfully queries MusicBrainz API
+- ✅ Respects 1 req/sec rate limit with p-limit
+- ✅ Caches responses to minimize API calls (30-day TTL)
+- ✅ Matches Japanese music correctly (Unicode support)
+- ✅ Confidence scores are accurate (100% for Coldplay, YOASOBI)
 
 **Rate Limiting Strategy:**
-- Use `p-limit` to enforce 1 request/second
-- Queue requests for processing
-- Show queue status in UI
+- ✅ Use `p-limit` to enforce 1 request/second
+- ✅ Queue requests for processing
+- ✅ 1-second delay between API calls
 
 ---
 
-### ⏳ Phase 4: File Matching Logic (PLANNED)
+### ⏳ Phase 3.5: Auto-Match & Rename Engine (PLANNED)
 **Status:** Not Started
-**Estimated Time:** 2-3 hours
+**Estimated Time:** 4-5 hours
 
 **Goals:**
-- Match scanned files to MusicBrainz database
-- Calculate confidence scores
-- Handle uncertain matches gracefully
-- Support manual review for low-confidence matches
+- Automatically match scanned files to MusicBrainz database in batch
+- Calculate confidence scores for each match
+- Implement confidence-based workflows (auto-approve, review, manual)
+- Preview renamed file structure before execution
+- Execute file renaming with dry-run mode
+- Support manual override for low-confidence matches
+
+**Why This Phase:**
+This is the **critical missing piece** that connects file scanning (Phase 2) with file organization (Phase 4). Without auto-matching and renaming:
+- Users would have to manually search MusicBrainz for every file (Phase 3 UI)
+- No batch processing capability
+- No way to rename files to Plex standards
+
+With Phase 3.5, the workflow becomes:
+1. **Scan folder** → Get list of files with existing metadata
+2. **Auto-match** → Batch search MusicBrainz for all files
+3. **Review matches** → See confidence scores, approve/reject/edit
+4. **Preview renames** → See before/after file paths
+5. **Execute rename** → Apply changes (dry-run first)
+6. **Ready for Phase 4** → Move to live Plex library
+
+**Confidence Thresholds:**
+- **≥90% confidence**: Auto-approve (green badge)
+- **70-89% confidence**: Manual review required (yellow badge)
+- **<70% confidence**: Manual search required (red badge)
 
 **Tasks:**
-- [ ] Implement file-to-metadata matching algorithm
-- [ ] Calculate confidence scores (0-100%)
-- [ ] Set confidence threshold (default: 80%)
-- [ ] Create UI for reviewing uncertain matches
-- [ ] Allow manual artist/album/track selection
-- [ ] Display proposed changes before applying
-- [ ] Show side-by-side comparison (current vs. proposed)
+
+**Backend (modules/organizer/matcher.js):**
+- [ ] Create `modules/organizer/matcher.js` backend module
+- [ ] Implement batch file-to-MusicBrainz matching algorithm
+  - [ ] Extract artist/album/title from existing file metadata
+  - [ ] Search MusicBrainz for each file using searchRecording()
+  - [ ] Calculate confidence scores (reuse Levenshtein from musicbrainz.js)
+  - [ ] Cache MusicBrainz responses per file
+- [ ] Create `/api/matcher/batch-match` endpoint (SSE progress)
+  - [ ] Input: Array of scanned files
+  - [ ] Output: SSE stream with match results + confidence scores
+- [ ] Implement rename preview generator
+  - [ ] Input: MusicBrainz match data
+  - [ ] Output: Proposed file path following Plex standards
+  - [ ] Format: `{artist}/{album}/{track_number} - {title}.{ext}`
+- [ ] Create `/api/matcher/preview-rename` endpoint
+  - [ ] Show before/after file paths
+  - [ ] Group by confidence category
+- [ ] Create `/api/matcher/execute-rename` endpoint
+  - [ ] Support dry-run mode (no actual file operations)
+  - [ ] Rename files using fs.rename()
+  - [ ] Handle errors gracefully (permissions, file locks)
+  - [ ] SSE progress updates per file
+
+**Frontend (public/js/organizer.js):**
+- [ ] Add "Auto-Match to MusicBrainz" button (after deep scan)
+- [ ] Display batch matching progress (files processed, matches found)
+- [ ] Show match results grouped by confidence:
+  - [ ] ✅ **Auto-Approved** (≥90%): Artist - Album - Title (confidence badge)
+  - [ ] ⚠️ **Review Required** (70-89%): Artist - Album - Title (confidence badge)
+  - [ ] ❌ **Manual Search** (<70%): Artist - Album - Title (confidence badge)
+- [ ] Add action buttons per match result:
+  - [ ] "Approve" - Accept MusicBrainz match
+  - [ ] "Edit" - Manually search MusicBrainz and select different match
+  - [ ] "Skip" - Ignore this file
+- [ ] Add "Preview Renames" button
+- [ ] Display rename preview table:
+  - [ ] Current path
+  - [ ] Proposed path (following Plex standards)
+  - [ ] Status (pending/approved/skipped)
+- [ ] Add "Execute Rename (Dry-Run)" button
+- [ ] Add "Execute Rename (Apply Changes)" button
+- [ ] Display rename execution progress with SSE
+- [ ] Show success/error messages per file
 
 **Deliverables:**
-- Matching algorithm with confidence scoring
-- Manual review interface
-- Change preview UI
+- ✅ Batch matching algorithm
+- ✅ Confidence-based categorization
+- ✅ Rename preview generator (Plex-compliant paths)
+- ✅ Rename execution engine with dry-run mode
+- ✅ Frontend UI for reviewing, approving, and executing
+- ✅ SSE progress tracking for batch operations
 
 **Success Criteria:**
-- High-confidence matches (>80%) are accurate
-- Low-confidence matches are flagged for review
-- User can approve/reject individual changes
-- No false positives on well-tagged files
+- ✅ Batch matches 100+ files efficiently
+- ✅ High-confidence matches (≥90%) are accurate
+- ✅ Low-confidence matches are flagged for review
+- ✅ User can approve/reject/edit individual matches
+- ✅ Rename preview accurately reflects Plex standards
+- ✅ Dry-run mode works correctly (no actual file changes)
+- ✅ Execute rename works without data loss
+- ✅ No false positives on well-tagged files
 
 **Matching Strategy:**
-1. Try metadata-based matching first (artist + album + title)
-2. Fall back to audio fingerprinting if metadata is poor
-3. Use filename parsing as last resort
-4. Flag for manual review if confidence < threshold
+1. **Extract metadata from file** (Phase 2 already provides this)
+2. **Search MusicBrainz** using artist + album + title
+3. **Calculate confidence** using Levenshtein distance
+4. **Categorize by confidence** (90%+, 70-89%, <70%)
+5. **Allow manual override** for low-confidence matches
+6. **Generate rename preview** using MusicBrainz data
+7. **Execute rename** with dry-run option
+
+**Plex-Compliant File Path Format:**
+```
+{artist}/{album}/{track_number} - {title}.{ext}
+
+Example:
+Coldplay/A Head Full of Dreams (2015)/01 - A Head Full of Dreams.flac
+YOASOBI/THE BOOK (2021)/03 - 夜に駆ける.flac
+```
+
+**UI Mockup:**
+```
+┌─────────────────────────────────────────────────────────────┐
+│ Auto-Match to MusicBrainz                                   │
+├─────────────────────────────────────────────────────────────┤
+│ [Start Batch Match]  [Cancel]                               │
+│                                                             │
+│ Progress: 234 / 523 files matched (45%)                     │
+│ ████████████░░░░░░░░░░░░░░░░░                              │
+├─────────────────────────────────────────────────────────────┤
+│ Match Results:                                              │
+│ • ✅ Auto-Approved (≥90%): 412 files                        │
+│ • ⚠️  Review Required (70-89%): 89 files                    │
+│ • ❌ Manual Search (<70%): 22 files                         │
+│                                                             │
+│ [View Auto-Approved] [Review Matches] [View Manual]        │
+└─────────────────────────────────────────────────────────────┘
+
+┌─────────────────────────────────────────────────────────────┐
+│ Review Required (89 files)                                  │
+├─────────────────────────────────────────────────────────────┤
+│ File: /music/Artist/Album/track.flac                        │
+│ MusicBrainz Match: Artist Name - Album Name - Track Title  │
+│ Confidence: 85% ⚠️                                          │
+│                                                             │
+│ [✅ Approve] [✏️ Edit Match] [⏭️ Skip]                     │
+├─────────────────────────────────────────────────────────────┤
+│ ...                                                         │
+└─────────────────────────────────────────────────────────────┘
+
+┌─────────────────────────────────────────────────────────────┐
+│ Rename Preview (501 files)                                  │
+├─────────────────────────────────────────────────────────────┤
+│ Current:  /music/artist name/album/01 track.flac           │
+│ Proposed: /music/Artist Name/Album Name (2024)/01 - Track  │
+│           Title.flac                                        │
+│ Status: ✅ Approved                                         │
+├─────────────────────────────────────────────────────────────┤
+│ ...                                                         │
+│                                                             │
+│ [🔍 Execute Rename (Dry-Run)] [✅ Execute Rename (Apply)]  │
+└─────────────────────────────────────────────────────────────┘
+```
 
 ---
 
-### ⏳ Phase 5: Safe File Operations (PLANNED)
+### ⏳ Phase 4: Move to Live Plex Library (PLANNED)
 **Status:** Not Started
 **Estimated Time:** 3-4 hours
 
 **Goals:**
-- Implement dry-run mode (preview changes)
-- Rename/move files safely
+- Move renamed files from staging folder to live Plex library folder
+- Verify no duplicate additions (already checked in Phase 2.5)
+- Support quality upgrades (replace lower-quality files in Plex)
 - Handle edge cases (duplicate filenames, special characters)
-- Provide rollback capability
+- Provide dry-run mode for safety
+- Optional: Trigger Plex library refresh after move
+
+**Why This Phase:**
+After Phase 3.5 (Auto-Match & Rename), files are renamed to Plex standards but still in the staging folder (offline library or YouTube download folder). Phase 4 completes the pipeline by:
+1. **Moving** renamed files to the live Plex library folder
+2. **Verifying** no conflicts (using Phase 2.5 Plex comparison data)
+3. **Handling upgrades** (replacing lower-quality versions in Plex)
+4. **Triggering Plex refresh** (optional, via Plex API)
+
+**Workflow:**
+```
+Phase 3.5 Output: Renamed files in staging folder
+  ↓
+Phase 4: Move to live library
+  ↓
+Live Plex Library: Ready for playback
+```
 
 **Tasks:**
+
+**Backend (modules/organizer/organizer.js):**
 - [ ] Create `modules/organizer/organizer.js` backend module
-- [ ] Implement dry-run mode (no actual changes)
-- [ ] Create safe rename/move functions
-- [ ] Handle filename conflicts (add suffix)
-- [ ] Sanitize filenames (remove invalid characters)
-- [ ] Create backup/rollback system
-- [ ] Add `/api/organize` endpoint
-- [ ] Implement progress tracking per file
+- [ ] Add live library path configuration (from frontend settings)
+- [ ] Implement safe move/copy functions
+  - [ ] Support both move and copy modes
+  - [ ] Handle filename conflicts (add suffix like `(1)`, `(2)`)
+  - [ ] Sanitize filenames (remove invalid OS characters)
+  - [ ] Preserve file permissions and timestamps
+- [ ] Create `/api/organizer/move-to-library` endpoint (SSE progress)
+  - [ ] Input: Array of renamed files + live library path + move/copy mode
+  - [ ] Output: SSE stream with progress updates
+  - [ ] Dry-run mode support (preview without actual move)
+- [ ] Implement quality upgrade logic
+  - [ ] Check if file already exists in live library
+  - [ ] Compare quality (using Phase 2.5 quality ranking)
+  - [ ] If upgrade: Delete old file, move new file
+  - [ ] If downgrade: Skip with warning
+- [ ] Add rollback capability
+  - [ ] Log all move operations (source → destination)
+  - [ ] Create `/api/organizer/rollback` endpoint
+  - [ ] Undo last batch of moves
+- [ ] Optional: Plex library refresh trigger
+  - [ ] POST to `/library/sections/{id}/refresh` endpoint
+  - [ ] Requires Plex server IP, port, token (from Phase 2.5)
+
+**Frontend (public/js/organizer.js):**
+- [ ] Add live library path input field (with drag-and-drop support)
+- [ ] Add move/copy mode toggle (radio buttons)
+  - [ ] Move: Delete from staging after successful move
+  - [ ] Copy: Keep original files in staging
+- [ ] Add "Move to Live Library (Dry-Run)" button
+- [ ] Display dry-run preview:
+  - [ ] Source path (renamed file in staging)
+  - [ ] Destination path (live library)
+  - [ ] Action (Move/Copy/Replace/Skip)
+  - [ ] Reason (New file / Quality upgrade / Duplicate skip)
+- [ ] Add "Move to Live Library (Execute)" button
+- [ ] Display move progress with SSE
+  - [ ] Files moved / total
+  - [ ] Current file being moved
+  - [ ] Success/error messages per file
+- [ ] Add "Rollback Last Move" button
+- [ ] Optional: Add "Trigger Plex Refresh" button
 
 **Deliverables:**
-- File operations module
-- Dry-run mode
-- Conflict resolution
-- Rollback capability
+- ✅ File move/copy module with safety features
+- ✅ Dry-run mode for preview
+- ✅ Conflict resolution (filename suffixes)
+- ✅ Quality upgrade handling
+- ✅ Rollback capability
+- ✅ SSE progress tracking
+- ✅ Optional Plex library refresh
 
 **Success Criteria:**
-- Dry-run accurately predicts changes
-- No data loss during operations
-- Handles edge cases gracefully
-- Can rollback failed operations
+- ✅ Dry-run accurately predicts move operations
+- ✅ No data loss during moves
+- ✅ Handles filename conflicts gracefully
+- ✅ Quality upgrades work correctly (replace MP3 with FLAC)
+- ✅ Quality downgrades are skipped with warning
+- ✅ Can rollback failed operations
+- ✅ Plex recognizes moved files correctly
 
 **Safety Features:**
 - **Dry-run first:** Always preview before applying
-- **Conflict resolution:** Add (1), (2), etc. to duplicates
-- **Validation:** Check destination paths exist
-- **Logging:** Record all operations for audit
+- **Conflict resolution:** Add (1), (2), etc. to duplicate filenames
+- **Validation:** Check live library path exists and is writable
+- **Logging:** Record all operations for audit trail
 - **Rollback:** Maintain operation history for undo
+- **Quality check:** Prevent downgrades, enable upgrades
+
+**Plex Refresh (Optional):**
+```bash
+# Trigger library refresh via Plex API
+POST http://{ip}:{port}/library/sections/{libraryId}/refresh?X-Plex-Token={token}
+```
+
+**UI Mockup:**
+```
+┌─────────────────────────────────────────────────────────────┐
+│ Move to Live Plex Library                                   │
+├─────────────────────────────────────────────────────────────┤
+│ Live Library Path: [/Volumes/Media/Music  ] [📁 Browse]    │
+│                                                             │
+│ Mode:  ○ Move (delete from staging)                        │
+│        ● Copy (keep in staging)                             │
+│                                                             │
+│ [🔍 Preview Move (Dry-Run)] [✅ Execute Move]              │
+├─────────────────────────────────────────────────────────────┤
+│ Dry-Run Preview (501 files):                                │
+│                                                             │
+│ Source:      /staging/Coldplay/Album/01 - Track.flac       │
+│ Destination: /live/Coldplay/Album/01 - Track.flac          │
+│ Action: ✅ Move (New file)                                  │
+│                                                             │
+│ Source:      /staging/Artist/Album/02 - Track.flac         │
+│ Destination: /live/Artist/Album/02 - Track.flac            │
+│ Action: 🔼 Replace (Quality upgrade: MP3 → FLAC)           │
+│                                                             │
+│ Source:      /staging/Artist/Album/03 - Track.mp3          │
+│ Destination: /live/Artist/Album/03 - Track.flac            │
+│ Action: ⏭️ Skip (Quality downgrade: Plex has FLAC)         │
+├─────────────────────────────────────────────────────────────┤
+│ Progress: 412 / 501 files moved (82%)                       │
+│ ██████████████████████░░░░░░                               │
+│                                                             │
+│ [↩️ Rollback Last Move] [🔄 Trigger Plex Refresh]          │
+└─────────────────────────────────────────────────────────────┘
+```
 
 ---
 
@@ -466,12 +994,39 @@ Select Artists to Process:
 
 ### Planned (Organizer Module)
 
-#### `POST /api/scan`
-**Purpose:** Scan music directory for files
+#### `POST /api/scan/structure`
+**Purpose:** Quick structure scan (Phase 1 - directories only)
 **Request:**
 ```json
 {
   "musicPath": "/path/to/music"
+}
+```
+**Response:** SSE stream with progress and final structure
+```json
+{
+  "status": "Structure scan completed!",
+  "progress": 100,
+  "completed": true,
+  "structure": {
+    "totalArtists": 2142,
+    "totalAlbums": 8456,
+    "totalLooseFiles": 234,
+    "groupedByLetter": {
+      "A": { "artistCount": 98, "albumCount": 234, "looseFileCount": 5 },
+      "B": { "artistCount": 76, "albumCount": 198, "looseFileCount": 2 }
+    }
+  }
+}
+```
+
+#### `POST /api/scan`
+**Purpose:** Deep scan music directory for files (Phase 2 - with metadata)
+**Request:**
+```json
+{
+  "musicPath": "/path/to/music",
+  "artistLetters": ["A", "B", "C"]  // Optional: filter by artist letters
 }
 ```
 **Response:** SSE stream with progress
@@ -480,6 +1035,100 @@ Select Artists to Process:
   "status": "Scanning...",
   "filesFound": 523,
   "progress": 45
+}
+```
+
+#### `POST /api/plex/connect`
+**Purpose:** Test Plex server connection
+**Request:**
+```json
+{
+  "serverIp": "192.168.1.100",
+  "port": 32400,
+  "token": "your-plex-token"
+}
+```
+**Response:**
+```json
+{
+  "success": true,
+  "server": {
+    "name": "MyPlexServer",
+    "version": "1.40.1.8227",
+    "platform": "Linux"
+  }
+}
+```
+
+#### `POST /api/plex/libraries`
+**Purpose:** Get list of Plex music libraries
+**Request:**
+```json
+{
+  "serverIp": "192.168.1.100",
+  "port": 32400,
+  "token": "your-plex-token"
+}
+```
+**Response:**
+```json
+{
+  "libraries": [
+    {
+      "id": 2,
+      "name": "Music",
+      "type": "artist",
+      "trackCount": 98234
+    }
+  ]
+}
+```
+
+#### `POST /api/plex/fetch`
+**Purpose:** Fetch all tracks from Plex music library
+**Request:**
+```json
+{
+  "serverIp": "192.168.1.100",
+  "port": 32400,
+  "token": "your-plex-token",
+  "libraryId": 2
+}
+```
+**Response:** SSE stream with progress
+```json
+{
+  "status": "Fetching tracks...",
+  "progress": 45,
+  "tracksFound": 44305
+}
+```
+
+#### `POST /api/plex/compare`
+**Purpose:** Compare offline scan results with Plex library
+**Request:**
+```json
+{
+  "offlineTracks": [...],  // Array of scanned offline tracks
+  "plexTracks": [...]      // Array of Plex library tracks
+}
+```
+**Response:**
+```json
+{
+  "safeToAdd": 1234,
+  "exactDuplicates": 456,
+  "qualityUpgrades": 89,
+  "qualityDowngrades": 23,
+  "sameQualityDupes": 12,
+  "conflicts": [
+    {
+      "offlineTrack": {...},
+      "plexTrack": {...},
+      "category": "QUALITY_UPGRADE",
+      "recommendation": "REPLACE"
+    }
+  ]
 }
 ```
 
@@ -631,21 +1280,22 @@ None - all dependencies installed
 
 ## Progress Summary
 
-**Overall Progress: 14%**
+**Overall Progress: 50%** (Phases 1-3 Complete)
 
 | Phase | Status | Progress | Files |
 |-------|--------|----------|-------|
 | Phase 1: UI Architecture | ✅ Complete | 100% | 6 files created |
-| Phase 2: File Scanning | 🚧 Not Started | 0% | 0 files |
-| Phase 3: MusicBrainz API | ⏳ Planned | 0% | 0 files |
-| Phase 4: File Matching | ⏳ Planned | 0% | 0 files |
-| Phase 5: File Operations | ⏳ Planned | 0% | 0 files |
-| Phase 6: Progress Updates | ⏳ Planned | 0% | 0 files |
-| Phase 7: Testing & Polish | ⏳ Planned | 0% | 0 files |
+| Phase 2: File Scanning | ✅ Complete | 100% | 4 files modified |
+| Phase 2.5: Plex Integration | ✅ Complete | 100% | 3 files modified |
+| Phase 3: MusicBrainz API | ✅ Complete | 100% | 5 files modified |
+| Phase 3.5: Auto-Match & Rename | ⏳ Planned | 0% | 0 files |
+| Phase 4: Move to Live Library | ⏳ Planned | 0% | 0 files |
+| Phase 5: Real-time Progress | 🔄 Partial | 50% | SSE already implemented |
+| Phase 6: Testing & Polish | ⏳ Planned | 0% | 0 files |
 
-**Last Updated:** November 15, 2025
-**Version:** 2.0.0-alpha.1
-**Next Milestone:** Phase 2 - File Scanning & Metadata Reading
+**Last Updated:** November 17, 2025
+**Version:** 2.0.0-alpha.3
+**Next Milestone:** Phase 3.5 (Auto-Match & Rename Engine)
 
 ---
 
@@ -654,14 +1304,18 @@ None - all dependencies installed
 ### Current State
 - ✅ Tab navigation working
 - ✅ Downloader module functional
-- ✅ Organizer placeholder created
-- 🚧 Organizer functionality pending
+- ✅ File scanning with metadata reading (Phase 2)
+- ✅ Plex Media Server integration (Phase 2.5)
+- ✅ MusicBrainz API integration (Phase 3)
+- ⏳ Auto-matching and renaming pending (Phase 3.5)
+- ⏳ Move to live library pending (Phase 4)
 
 ### Next Steps
-1. Start Phase 2: File Scanning
-2. Create scanner.js backend module
-3. Implement /api/scan endpoint
-4. Build frontend scan interface
+1. Start Phase 3.5: Auto-Match & Rename Engine
+2. Create matcher.js backend module
+3. Implement /api/matcher/batch-match endpoint (SSE)
+4. Build frontend auto-match UI with confidence thresholds
+5. Implement rename preview and execution
 
 ### Testing the App
 ```bash

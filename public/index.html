@@ -186,7 +186,10 @@
                     </small>
                 </div>
 
-                <button type="submit" id="scanBtn">Scan Library</button>
+                <div class="button-group">
+                    <button type="submit" id="scanBtn">Scan Library</button>
+                    <button type="button" id="cancelScanBtn" class="button-cancel" style="display: none;">Cancel Scan</button>
+                </div>
             </form>
 
             <!-- Progress Container -->
@@ -246,7 +249,196 @@
                 <!-- Alphabetical Groups -->
                 <div class="artist-groups" id="artistGroups">
                     <h3>Artists Grouped Alphabetically</h3>
+                    <p style="font-size: 12px; color: #666; margin-bottom: 15px;">
+                        Click letter groups to select them for deep scanning
+                    </p>
                     <div class="group-grid" id="groupGrid"></div>
+
+                    <!-- Deep Scan Buttons -->
+                    <div class="button-group" style="margin-top: 20px; display: none;" id="deepScanButtons">
+                        <button type="button" id="deepScanSelectedBtn" class="button-primary" style="display: none;">
+                            Deep Scan Selected
+                        </button>
+                        <button type="button" id="deepScanAllBtn" class="button-secondary" style="display: none;">
+                            Deep Scan All
+                        </button>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Plex Integration Section -->
+            <div class="plex-section" id="plexSection" style="display: none;">
+                <div class="section-header">
+                    <h2>🎬 Plex Media Server Integration</h2>
+                    <p class="subtitle">Compare your offline library with your Plex Media Server to prevent duplicates and downgrades</p>
+                </div>
+
+                <!-- Plex Connection Settings -->
+                <div class="plex-connection-panel">
+                    <h3>Plex Server Connection</h3>
+                    <form id="plexConnectForm">
+                        <div class="form-group">
+                            <label for="plexServerIp">Server IP Address *</label>
+                            <input
+                                type="text"
+                                id="plexServerIp"
+                                name="plexServerIp"
+                                value=""
+                                placeholder="192.168.1.100 or plex.local"
+                                required
+                            >
+                        </div>
+
+                        <div class="form-group">
+                            <label for="plexPort">Port *</label>
+                            <input
+                                type="text"
+                                id="plexPort"
+                                name="plexPort"
+                                value="32400"
+                                placeholder="32400"
+                                required
+                            >
+                        </div>
+
+                        <div class="form-group">
+                            <label for="plexToken">X-Plex-Token *</label>
+                            <input
+                                type="password"
+                                id="plexToken"
+                                name="plexToken"
+                                value=""
+                                placeholder="Your Plex authentication token"
+                                required
+                            >
+                            <small style="color: #666; font-size: 12px; display: block; margin-top: 5px;">
+                                Find your token: Settings → Account → Authorized Devices → Show XML → Copy the "token" value
+                            </small>
+                        </div>
+
+                        <div class="button-group">
+                            <button type="submit" id="plexConnectBtn">Test Connection</button>
+                        </div>
+                    </form>
+
+                    <div class="connection-status" id="connectionStatus" style="display: none;"></div>
+                </div>
+
+                <!-- Plex Library Selection -->
+                <div class="plex-library-panel" id="plexLibraryPanel" style="display: none;">
+                    <h3>Select Music Library</h3>
+                    <div id="libraryList" class="library-list"></div>
+
+                    <div class="button-group" style="margin-top: 20px;">
+                        <button type="button" id="fetchLibraryBtn" style="display: none;">Fetch Library Tracks</button>
+                    </div>
+                </div>
+
+                <!-- Plex Fetch Progress -->
+                <div class="plex-progress-container" id="plexProgressContainer" style="display: none;">
+                    <h3>Fetching Plex Library</h3>
+                    <div class="progress-text" id="plexProgressText">Initializing...</div>
+                    <div class="progress-bar-bg">
+                        <div class="progress-bar" id="plexProgressBar"></div>
+                    </div>
+                </div>
+
+                <!-- Comparison Results -->
+                <div class="comparison-results" id="comparisonResults" style="display: none;">
+                    <h3>Comparison Results</h3>
+
+                    <!-- Summary Statistics -->
+                    <div class="comparison-stats-grid">
+                        <div class="comparison-stat-card safe">
+                            <div class="label">Safe to Add</div>
+                            <div class="value" id="statSafeToAdd">0</div>
+                            <div class="desc">New tracks not in Plex</div>
+                        </div>
+                        <div class="comparison-stat-card upgrade">
+                            <div class="label">Quality Upgrades</div>
+                            <div class="value" id="statUpgrades">0</div>
+                            <div class="desc">Better quality than Plex</div>
+                        </div>
+                        <div class="comparison-stat-card downgrade">
+                            <div class="label">Quality Downgrades</div>
+                            <div class="value" id="statDowngrades">0</div>
+                            <div class="desc">Worse quality than Plex</div>
+                        </div>
+                        <div class="comparison-stat-card duplicate">
+                            <div class="label">Same Quality Duplicates</div>
+                            <div class="value" id="statDuplicates">0</div>
+                            <div class="desc">Already in Plex (same quality)</div>
+                        </div>
+                    </div>
+
+                    <!-- Detailed Conflicts Table -->
+                    <div class="conflicts-panel">
+                        <h4>Detailed Track Analysis</h4>
+                        <div class="filter-buttons">
+                            <button class="filter-btn active" data-filter="all">All</button>
+                            <button class="filter-btn" data-filter="SAFE_TO_ADD">Safe to Add</button>
+                            <button class="filter-btn" data-filter="QUALITY_UPGRADE">Upgrades</button>
+                            <button class="filter-btn" data-filter="QUALITY_DOWNGRADE">Downgrades</button>
+                            <button class="filter-btn" data-filter="SAME_QUALITY_DUPLICATE">Duplicates</button>
+                        </div>
+                        <div class="conflicts-table-container">
+                            <table class="conflicts-table" id="conflictsTable">
+                                <thead>
+                                    <tr>
+                                        <th>Artist</th>
+                                        <th>Album</th>
+                                        <th>Title</th>
+                                        <th>Offline Quality</th>
+                                        <th>Plex Quality</th>
+                                        <th>Status</th>
+                                        <th>Recommendation</th>
+                                    </tr>
+                                </thead>
+                                <tbody id="conflictsTableBody">
+                                </tbody>
+                            </table>
+                        </div>
+                    </div>
+
+                    <div class="button-group" style="margin-top: 20px;">
+                        <button type="button" id="exportReportBtn">Export Report (CSV)</button>
+                        <button type="button" id="newComparisonBtn">New Comparison</button>
+                    </div>
+                </div>
+            </div>
+
+            <!-- MusicBrainz Integration (Phase 3) -->
+            <div id="musicbrainzSection" class="results-section" style="display: none; margin-top: 30px;">
+                <h2>🎵 MusicBrainz Metadata Search</h2>
+
+                <div class="card">
+                    <h3>Artist Search</h3>
+                    <form id="mbArtistSearchForm" class="form-inline">
+                        <input type="text" id="mbArtistInput" placeholder="Enter artist name..." required>
+                        <button type="submit">Search Artist</button>
+                    </form>
+                    <div id="mbArtistResults" class="mb-results"></div>
+                </div>
+
+                <div class="card">
+                    <h3>Release (Album) Search</h3>
+                    <form id="mbReleaseSearchForm" class="form-inline">
+                        <input type="text" id="mbReleaseArtistInput" placeholder="Artist name..." required>
+                        <input type="text" id="mbReleaseAlbumInput" placeholder="Album name..." required>
+                        <button type="submit">Search Release</button>
+                    </form>
+                    <div id="mbReleaseResults" class="mb-results"></div>
+                </div>
+
+                <div class="card">
+                    <h3>Recording (Track) Search</h3>
+                    <form id="mbRecordingSearchForm" class="form-inline">
+                        <input type="text" id="mbRecordingArtistInput" placeholder="Artist name..." required>
+                        <input type="text" id="mbRecordingAlbumInput" placeholder="Album name..." required>
+                        <input type="text" id="mbRecordingTitleInput" placeholder="Track title..." required>
+                        <button type="submit">Search Recording</button>
+                    </form>
+                    <div id="mbRecordingResults" class="mb-results"></div>
                 </div>
             </div>
         </div>
