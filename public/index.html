@@ -5,6 +5,10 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Music Tools - Download & Organize</title>
 
+    <!-- Favicons -->
+    <link rel="icon" type="image/svg+xml" href="/favicon.svg">
+    <link rel="icon" type="image/x-icon" href="/favicon.ico">
+
     <!-- Shared CSS -->
     <link rel="stylesheet" href="/css/shared.css">
     <link rel="stylesheet" href="/css/downloader.css">
@@ -169,8 +173,21 @@
                 <strong>Supports:</strong> Western and Japanese music databases
             </div>
 
-            <!-- Scan Form -->
-            <form id="scanForm">
+            <!-- STEP 1: Scan Library -->
+            <div id="workflow-scan" class="workflow-section active">
+                <div class="section-collapse-header">
+                    <div class="header-left">
+                        <div class="step-indicator">1</div>
+                        <div class="header-title">
+                            <h2>📂 Scan Library</h2>
+                            <p class="subtitle">Select your music folder to analyze</p>
+                        </div>
+                    </div>
+                    <div class="collapse-icon">▼</div>
+                </div>
+                <div class="section-collapse-body">
+                    <!-- Scan Form -->
+                    <form id="scanForm">
                 <div class="form-group">
                     <label for="musicPath">Music Library Path *</label>
                     <input
@@ -192,15 +209,30 @@
                 </div>
             </form>
 
-            <!-- Progress Container -->
-            <div class="progress-container" id="scanProgressContainer">
-                <div class="progress-text" id="scanProgressText">Initializing scan...</div>
-                <div class="progress-bar-bg">
-                    <div class="progress-bar" id="scanProgressBar"></div>
+                    <!-- Progress Container -->
+                    <div class="progress-container" id="scanProgressContainer">
+                        <div class="progress-text" id="scanProgressText">Initializing scan...</div>
+                        <div class="progress-bar-bg">
+                            <div class="progress-bar" id="scanProgressBar"></div>
+                        </div>
+                        <div class="log-container" id="scanLogContainer"></div>
+                    </div>
                 </div>
-                <div class="log-container" id="scanLogContainer"></div>
             </div>
 
+            <!-- STEP 2: Scan Results & Deep Scan -->
+            <div id="workflow-results" class="workflow-section pending">
+                <div class="section-collapse-header">
+                    <div class="header-left">
+                        <div class="step-indicator">2</div>
+                        <div class="header-title">
+                            <h2>📊 Scan Results</h2>
+                            <p class="subtitle">Review scan results and run deep scan</p>
+                        </div>
+                    </div>
+                    <div class="collapse-icon">▼</div>
+                </div>
+                <div class="section-collapse-body">
             <!-- Scan Results -->
             <div class="scan-results" id="scanResults">
                 <div class="results-header">
@@ -266,13 +298,24 @@
                     </div>
                 </div>
             </div>
-
-            <!-- Plex Integration Section -->
-            <div class="plex-section" id="plexSection" style="display: none;">
-                <div class="section-header">
-                    <h2>🎬 Plex Media Server Integration</h2>
-                    <p class="subtitle">Compare your offline library with your Plex Media Server to prevent duplicates and downgrades</p>
                 </div>
+            </div>
+
+            <!-- STEP 3: Plex Integration -->
+            <div id="workflow-plex" class="workflow-section pending">
+                <div class="section-collapse-header">
+                    <div class="header-left">
+                        <div class="step-indicator">3</div>
+                        <div class="header-title">
+                            <h2>🎬 Plex Media Server Integration</h2>
+                            <p class="subtitle">Compare offline library with Plex to prevent duplicates</p>
+                        </div>
+                    </div>
+                    <div class="collapse-icon">▼</div>
+                </div>
+                <div class="section-collapse-body">
+            <!-- Plex Integration Section -->
+            <div class="plex-section" id="plexSection">
 
                 <!-- Plex Connection Settings -->
                 <div class="plex-connection-panel">
@@ -407,13 +450,24 @@
                     </div>
                 </div>
             </div>
-
-            <!-- Auto-Match & Rename Section (Phase 3.5) -->
-            <div id="matcherSection" class="results-section" style="display: none; margin-top: 30px;">
-                <div class="section-header">
-                    <h2>🔄 Auto-Match & Rename Engine</h2>
-                    <p class="subtitle">Automatically match your scanned files to MusicBrainz and rename them to Plex standards</p>
                 </div>
+            </div>
+
+            <!-- STEP 4: Auto-Match & Rename -->
+            <div id="workflow-matcher" class="workflow-section pending">
+                <div class="section-collapse-header">
+                    <div class="header-left">
+                        <div class="step-indicator">4</div>
+                        <div class="header-title">
+                            <h2>🔄 Auto-Match & Rename Engine</h2>
+                            <p class="subtitle">Match files to MusicBrainz and rename to Plex standards</p>
+                        </div>
+                    </div>
+                    <div class="collapse-icon">▼</div>
+                </div>
+                <div class="section-collapse-body">
+            <!-- Auto-Match & Rename Section (Phase 3.5) -->
+            <div id="matcherSection" class="results-section">
 
                 <!-- Three-Phase Match Controls -->
                 <div class="card">
@@ -599,13 +653,24 @@
                     </div>
                 </div>
             </div>
-
-            <!-- Move to Live Plex Library Section (Phase 4) -->
-            <div id="moveToLibrarySection" class="results-section" style="display: none; margin-top: 30px;">
-                <div class="section-header">
-                    <h2>📦 Move to Live Plex Library</h2>
-                    <p class="subtitle">Move/copy renamed files from staging to your live Plex Media Server library</p>
                 </div>
+            </div>
+
+            <!-- STEP 5: Move to Live Library -->
+            <div id="workflow-move" class="workflow-section pending">
+                <div class="section-collapse-header">
+                    <div class="header-left">
+                        <div class="step-indicator">5</div>
+                        <div class="header-title">
+                            <h2>📦 Move to Live Plex Library</h2>
+                            <p class="subtitle">Move organized files to live Plex Media Server</p>
+                        </div>
+                    </div>
+                    <div class="collapse-icon">▼</div>
+                </div>
+                <div class="section-collapse-body">
+            <!-- Move to Live Plex Library Section (Phase 4) -->
+            <div id="moveToLibrarySection" class="results-section">
 
                 <!-- Configuration Panel -->
                 <div class="card">
@@ -732,6 +797,8 @@
                             New Move Operation
                         </button>
                     </div>
+                </div>
+            </div>
                 </div>
             </div>
         </div>

@@ -1225,3 +1225,202 @@
     background: #e2e8f0;
     border-color: #cbd5e1;
 }
+
+/* ========================================
+   PROGRESSIVE DISCLOSURE / ACCORDION SYSTEM
+   ======================================== */
+
+/* Workflow Section Wrapper */
+.workflow-section {
+    margin-bottom: 20px;
+    border: 2px solid #333;
+    border-radius: 8px;
+    background: #1a1a1a;
+    overflow: hidden;
+    transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+.workflow-section.collapsed {
+    border-color: #444;
+}
+
+.workflow-section.active {
+    border-color: #e31837;
+    box-shadow: 0 0 20px rgba(227, 24, 55, 0.3);
+}
+
+.workflow-section.pending {
+    opacity: 0.6;
+    pointer-events: none;
+}
+
+/* Section Header (Collapsible) */
+.section-collapse-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 20px;
+    background: linear-gradient(135deg, #2a2a2a 0%, #1a1a1a 100%);
+    cursor: pointer;
+    user-select: none;
+    transition: all 0.2s;
+}
+
+.workflow-section.active .section-collapse-header {
+    background: linear-gradient(135deg, #e31837 0%, #b01229 100%);
+}
+
+.workflow-section.collapsed .section-collapse-header:hover {
+    background: #2a2a2a;
+}
+
+.section-collapse-header .header-left {
+    display: flex;
+    align-items: center;
+    gap: 15px;
+    flex: 1;
+}
+
+.section-collapse-header .step-indicator {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 40px;
+    height: 40px;
+    border-radius: 50%;
+    background: #333;
+    color: white;
+    font-weight: bold;
+    font-size: 18px;
+    flex-shrink: 0;
+}
+
+.workflow-section.active .step-indicator {
+    background: white;
+    color: #e31837;
+}
+
+.workflow-section.completed .step-indicator {
+    background: #27ae60;
+    color: white;
+}
+
+.workflow-section.completed .step-indicator::before {
+    content: "✓";
+}
+
+.section-collapse-header .header-title {
+    flex: 1;
+}
+
+.section-collapse-header h2 {
+    margin: 0;
+    font-size: 20px;
+    color: white;
+}
+
+.section-collapse-header .subtitle {
+    margin: 5px 0 0 0;
+    font-size: 13px;
+    color: rgba(255, 255, 255, 0.7);
+}
+
+.workflow-section.completed .subtitle {
+    color: #27ae60;
+    font-weight: 500;
+}
+
+.section-collapse-header .collapse-icon {
+    font-size: 24px;
+    color: white;
+    transition: transform 0.3s;
+    flex-shrink: 0;
+}
+
+.workflow-section.collapsed .collapse-icon {
+    transform: rotate(-90deg);
+}
+
+/* Section Body (Accordion Content) */
+.section-collapse-body {
+    max-height: 10000px;
+    overflow: hidden;
+    transition: max-height 0.4s cubic-bezier(0.4, 0, 0.2, 1),
+                opacity 0.3s ease,
+                padding 0.3s ease;
+    padding: 20px;
+    opacity: 1;
+}
+
+.workflow-section.collapsed .section-collapse-body {
+    max-height: 0;
+    opacity: 0;
+    padding: 0 20px;
+}
+
+/* Completion Summary Badge */
+.completion-badge {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    padding: 6px 12px;
+    border-radius: 20px;
+    background: #27ae60;
+    color: white;
+    font-size: 12px;
+    font-weight: 600;
+}
+
+.completion-badge .icon {
+    font-size: 14px;
+}
+
+/* Progress Indicator */
+.workflow-progress {
+    display: flex;
+    gap: 10px;
+    margin-bottom: 30px;
+    padding: 15px;
+    background: #2a2a2a;
+    border-radius: 8px;
+}
+
+.workflow-progress .progress-step {
+    flex: 1;
+    text-align: center;
+    padding: 10px;
+    border-radius: 6px;
+    background: #1a1a1a;
+    color: #666;
+    font-size: 12px;
+    font-weight: 500;
+    transition: all 0.3s;
+}
+
+.workflow-progress .progress-step.completed {
+    background: #27ae60;
+    color: white;
+}
+
+.workflow-progress .progress-step.active {
+    background: #e31837;
+    color: white;
+    transform: scale(1.05);
+    box-shadow: 0 4px 12px rgba(227, 24, 55, 0.3);
+}
+
+/* Smooth fade-in animation for new sections */
+@keyframes fadeInSlide {
+    from {
+        opacity: 0;
+        transform: translateY(-20px);
+    }
+    to {
+        opacity: 1;
+        transform: translateY(0);
+    }
+}
+
+.workflow-section.revealing {
+    animation: fadeInSlide 0.4s ease-out;
+}

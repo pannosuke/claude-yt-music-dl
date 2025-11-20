@@ -21,6 +21,15 @@ let currentFilterCategory = 'all';
 let artistMatchResults = null;
 let albumMatchResults = null;
 
+// Progressive disclosure / accordion state
+const workflowSections = {
+    scan: { id: 'workflow-scan', state: 'active', step: 1 },
+    results: { id: 'workflow-results', state: 'pending', step: 2 },
+    plex: { id: 'workflow-plex', state: 'pending', step: 3 },
+    matcher: { id: 'workflow-matcher', state: 'pending', step: 4 },
+    move: { id: 'workflow-move', state: 'pending', step: 5 }
+};
+
 // DOM elements
 const organizerElements = {
     form: null,
@@ -92,6 +101,9 @@ function initOrganizer() {
     // Setup modal event listeners for Phase 3.75
     setupModalEventListeners();
 
+    // Initialize accordion headers
+    initAccordionHeaders();
+
     // Show the module
     const module = document.getElementById('module-organizer');
     if (module) {
@@ -160,6 +172,144 @@ function scrollToElement(element) {
         });
     } else {
         console.warn('[Scroll] Element not found:', selector);
+    }
+}
+
+/**
+ * ========================================
+ * PROGRESSIVE DISCLOSURE / ACCORDION SYSTEM
+ * ========================================
+ */
+
+/**
+ * Set section state and update UI
+ * States: 'pending', 'active', 'completed', 'collapsed'
+ */
+function setSectionState(sectionKey, state, summary = '') {
+    const section = workflowSections[sectionKey];
+    if (!section) return;
+
+    section.state = state;
+    if (summary) section.summary = summary;
+
+    const element = document.getElementById(section.id);
+    if (!element) return;
+
+    // Remove all state classes
+    element.classList.remove('pending', 'active', 'completed', 'collapsed', 'revealing');
+
+    // Add new state class
+    element.classList.add(state);
+
+    // Update summary text if completed
+    if (state === 'completed' && summary) {
+        const subtitleEl = element.querySelector('.subtitle');
+        if (subtitleEl) {
+            subtitleEl.textContent = summary;
+        }
+    }
+
+    // Add revealing animation for newly activated sections
+    if (state === 'active') {
+        element.classList.add('revealing');
+        setTimeout(() => element.classList.remove('revealing'), 400);
+    }
+}
+
+/**
+ * Activate a section and collapse previous ones
+ */
+function activateSection(sectionKey, summary = '') {
+    console.log(`[Workflow] Activating section: ${sectionKey}`);
+
+    // Complete and collapse all previous sections
+    for (const key in workflowSections) {
+        const section = workflowSections[key];
+        if (section.step < workflowSections[sectionKey].step) {
+            setSectionState(key, 'completed');
+            collapseSection(key);
+        }
+    }
+
+    // Activate the current section
+    setSectionState(sectionKey, 'active', summary);
+    expandSection(sectionKey);
+
+    // Scroll to the section
+    setTimeout(() => {
+        const element = document.getElementById(workflowSections[sectionKey].id);
+        if (element) {
+            scrollToElement(element);
+        }
+    }, 100);
+}
+
+/**
+ * Complete a section with a summary
+ */
+function completeSection(sectionKey, summary) {
+    console.log(`[Workflow] Completing section: ${sectionKey} - ${summary}`);
+    setSectionState(sectionKey, 'completed', summary);
+}
+
+/**
+ * Collapse a section
+ */
+function collapseSection(sectionKey) {
+    const section = workflowSections[sectionKey];
+    if (!section) return;
+
+    const element = document.getElementById(section.id);
+    if (!element) return;
+
+    element.classList.add('collapsed');
+    console.log(`[Workflow] Collapsed section: ${sectionKey}`);
+}
+
+/**
+ * Expand a section
+ */
+function expandSection(sectionKey) {
+    const section = workflowSections[sectionKey];
+    if (!section) return;
+
+    const element = document.getElementById(section.id);
+    if (!element) return;
+
+    element.classList.remove('collapsed');
+    console.log(`[Workflow] Expanded section: ${sectionKey}`);
+}
+
+/**
+ * Toggle section collapse/expand on header click
+ */
+function toggleSection(sectionKey) {
+    const section = workflowSections[sectionKey];
+    if (!section) return;
+
+    const element = document.getElementById(section.id);
+    if (!element) return;
+
+    if (element.classList.contains('collapsed')) {
+        expandSection(sectionKey);
+    } else {
+        collapseSection(sectionKey);
+    }
+}
+
+/**
+ * Initialize accordion header click handlers
+ */
+function initAccordionHeaders() {
+    for (const key in workflowSections) {
+        const section = workflowSections[key];
+        const element = document.getElementById(section.id);
+        if (!element) continue;
+
+        const header = element.querySelector('.section-collapse-header');
+        if (header) {
+            header.addEventListener('click', () => toggleSection(key));
+        }
     }
 }
 
@@ -337,6 +487,9 @@ function displayStructureResults(structure) {
     setTimeout(() => {
         scrollToElement(organizerElements.resultsContainer);
     }, 100);
+
+    // Activate Results section in accordion
+    activateSection('results', `Found ${structure.totalArtists} artists, ${structure.totalAlbums} albums`);
 }
 
 /**
@@ -687,6 +840,9 @@ async function handleDeepScan(scanAll = false) {
                                 // Initialize Plex and Matcher integrations after deep scan
                                 initPlexIntegration();
                                 initMatcherIntegration();
+
+                                // Activate Plex section in accordion
+                                activateSection('plex', `${data.summary.totalFiles} files scanned - Ready for Plex comparison`);
                             }
                         }
                     } catch (parseError) {
@@ -1256,6 +1412,10 @@ async function compareLibraries() {
                                 scrollToElement(comparisonPanel);
                             }
                         }, 100);
+
+                        // Activate Matcher section in accordion
+                        const totalConflicts = data.results.safeToAdd + data.results.qualityUpgrades + data.results.qualityDowngrades + data.results.sameQualityDupes;
+                        activateSection('matcher', `${totalConflicts} tracks analyzed - Ready for matching & renaming`);
                     }
 
                     if (data.error) {
@@ -2326,6 +2486,9 @@ async function handleExecuteAlbumRenames() {
                 initMoveToLibrary(); // Initialize event listeners for Move section
                 addScanLog('📦 Ready to move files to live Plex library - scroll down', 'info');
                 scrollToElement('#moveToLibrarySection');
+
+                // Activate Move section in accordion
+                activateSection('move', 'Files renamed and ready to move to live library');
             }
         } else {
             addScanLog(`Error renaming albums: ${data.error}`, 'error');
