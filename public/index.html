@@ -208,15 +208,6 @@
                     <button type="button" id="cancelScanBtn" class="button-cancel" style="display: none;">Cancel Scan</button>
                 </div>
             </form>
-
-                    <!-- Progress Container -->
-                    <div class="progress-container" id="scanProgressContainer">
-                        <div class="progress-text" id="scanProgressText">Initializing scan...</div>
-                        <div class="progress-bar-bg">
-                            <div class="progress-bar" id="scanProgressBar"></div>
-                        </div>
-                        <div class="log-container" id="scanLogContainer"></div>
-                    </div>
                 </div>
             </div>
 
@@ -233,6 +224,15 @@
                     <div class="collapse-icon">▼</div>
                 </div>
                 <div class="section-collapse-body">
+                    <!-- Progress Container (shared for structure scan and deep scan) -->
+                    <div class="progress-container" id="scanProgressContainer">
+                        <div class="progress-text" id="scanProgressText">Initializing scan...</div>
+                        <div class="progress-bar-bg">
+                            <div class="progress-bar" id="scanProgressBar"></div>
+                        </div>
+                        <div class="log-container" id="scanLogContainer"></div>
+                    </div>
+
             <!-- Scan Results -->
             <div class="scan-results" id="scanResults">
                 <div class="results-header">
