@@ -61,7 +61,6 @@ function initOrganizer() {
     organizerElements.logContainer = document.getElementById('scanLogContainer');
     organizerElements.resultsContainer = document.getElementById('scanResults');
     organizerElements.newScanBtn = document.getElementById('newScanBtn');
-    organizerElements.clearCacheBtn = document.getElementById('clearCacheBtn');
     organizerElements.summaryTotalFiles = document.getElementById('summaryTotalFiles');
     organizerElements.summaryCompliantFiles = document.getElementById('summaryCompliantFiles');
     organizerElements.summaryNeedsFix = document.getElementById('summaryNeedsFix');
@@ -81,7 +80,6 @@ function initOrganizer() {
     // Setup event listeners
     organizerElements.form.addEventListener('submit', handleScanSubmit);
     organizerElements.newScanBtn.addEventListener('click', resetScan);
-    organizerElements.clearCacheBtn.addEventListener('click', handleClearCache);
     organizerElements.cancelScanBtn.addEventListener('click', handleCancelScan);
     organizerElements.deepScanSelectedBtn.addEventListener('click', () => handleDeepScan(false));
     organizerElements.deepScanAllBtn.addEventListener('click', () => handleDeepScan(true));
@@ -217,80 +215,6 @@ function resetScan() {
 }
 
 /**
- * Clear MusicBrainz cache and reset all matching state
- */
-async function handleClearCache() {
-    const confirmed = confirm(
-        'This will:\n' +
-        '• Delete all MusicBrainz cache entries\n' +
-        '• Reset all matching results (artist, album, track)\n' +
-        '• Clear scan data\n\n' +
-        'Are you sure you want to continue?'
-    );
-
-    if (!confirmed) return;
-
-    try {
-        // Disable button during operation
-        organizerElements.clearCacheBtn.disabled = true;
-        organizerElements.clearCacheBtn.textContent = 'Clearing...';
-
-        // Call backend to clear cache
-        const response = await fetch('http://localhost:3000/api/musicbrainz/clear-cache', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' }
-        });
-
-        const result = await response.json();
-
-        if (result.success) {
-            // Reset all frontend state variables
-            scanData = null;
-            artistMatchResults = null;
-            albumMatchResults = null;
-            matchResults = [];
-            selectedGroups.clear();
-
-            // Hide all results sections
-            organizerElements.resultsContainer.classList.remove('active');
-            const artistResults = document.getElementById('artistMatchResults');
-            const albumResults = document.getElementById('albumMatchResults');
-            const trackResults = document.getElementById('trackMatchResults');
-            if (artistResults) artistResults.style.display = 'none';
-            if (albumResults) albumResults.style.display = 'none';
-            if (trackResults) trackResults.style.display = 'none';
-
-            // Show form
-            organizerElements.form.style.display = 'block';
-
-            // Clear progress and logs
-            organizerElements.progressContainer.style.display = 'none';
-            organizerElements.logContainer.innerHTML = '';
-
-            // Show success message
-            addScanLog(
-                `✅ Successfully cleared ${result.cleared} cache entries. All state reset.`,
-                'success'
-            );
-            organizerElements.progressContainer.style.display = 'block';
-
-            alert(`Cache cleared successfully!\n\n${result.message}\n\nAll matching results have been reset.`);
-        } else {
-            throw new Error(result.message || 'Failed to clear cache');
-        }
-    } catch (error) {
-        console.error('[Clear Cache] Error:', error);
-        addScanLog(`❌ Failed to clear cache: ${error.message}`, 'error');
-        organizerElements.progressContainer.style.display = 'block';
-        alert(`Failed to clear cache: ${error.message}`);
-    } finally {
-        // Re-enable button
-        organizerElements.clearCacheBtn.disabled = false;
-        organizerElements.clearCacheBtn.textContent = 'Clear Cache & Reset';
-    }
-}
-
-/**
  * Handle scan cancellation
  */
 function handleCancelScan() {
@@ -332,11 +256,6 @@ function displayStructureResults(structure) {
 
     // Hide form
     organizerElements.form.style.display = 'none';
-
-    // Auto-scroll to results
-    setTimeout(() => {
-        scrollToElement(organizerElements.resultsContainer);
-    }, 100);
 }
 
 /**
@@ -684,8 +603,9 @@ async function handleDeepScan(scanAll = false) {
                             if (data.summary) {
                                 addScanLog(`Deep scan completed! ${data.summary.totalFiles} files processed.`, 'success');
                                 displayScanResults(data);
-                                // Initialize Plex and Matcher integrations after deep scan
+                                // Initialize Plex, MusicBrainz, and Matcher integrations after deep scan
                                 initPlexIntegration();
+                                initMusicBrainzIntegration();
                                 initMatcherIntegration();
                             }
                         }
@@ -869,8 +789,9 @@ async function handleScanSubmit(e) {
                             // Deep scan completed
                             addScanLog(`Deep scan completed! ${data.summary.totalFiles} files processed.`, 'success');
                             displayScanResults(data);
-                            // Initialize Plex and Matcher integrations after deep scan
+                            // Initialize Plex, MusicBrainz, and Matcher integrations after deep scan
                             initPlexIntegration();
+                            initMusicBrainzIntegration();
                             initMatcherIntegration();
                         }
                     }
@@ -1017,14 +938,6 @@ async function handlePlexConnect(e) {
 
             // Fetch libraries
             await fetchLibraries();
-
-            // Auto-scroll to library selection section
-            setTimeout(() => {
-                const libraryPanel = document.getElementById('plexLibraryPanel');
-                if (libraryPanel) {
-                    scrollToElement(libraryPanel);
-                }
-            }, 100);
         } else {
             showConnectionStatus('error', `Connection failed: ${result.error}`);
         }
@@ -1248,14 +1161,6 @@ async function compareLibraries() {
                         comparisonResults = data.results;
                         displayComparisonResults(data.results);
                         addScanLog('Comparison complete!', 'success');
-
-                        // Auto-scroll to comparison results
-                        setTimeout(() => {
-                            const comparisonPanel = document.getElementById('comparisonResults');
-                            if (comparisonPanel) {
-                                scrollToElement(comparisonPanel);
-                            }
-                        }, 100);
                     }
 
                     if (data.error) {
@@ -1725,44 +1630,21 @@ function initMatcherIntegration() {
         startBatchMatchBtn.addEventListener('click', handleStartBatchMatch);
     }
 
-    // Two-phase matching buttons
+    // Three-phase matching buttons
     const matchArtistsBtn = document.getElementById('matchArtistsBtn');
     const matchAlbumsBtn = document.getElementById('matchAlbumsBtn');
-    const renameArtistFoldersBtn = document.getElementById('renameArtistFoldersBtn');
-    const executeArtistRenamesBtn = document.getElementById('executeArtistRenamesBtn');
-    const cancelArtistRenamesBtn = document.getElementById('cancelArtistRenamesBtn');
-    const renameAlbumFoldersBtn = document.getElementById('renameAlbumFoldersBtn');
-    const executeAlbumRenamesBtn = document.getElementById('executeAlbumRenamesBtn');
-    const cancelAlbumRenamesBtn = document.getElementById('cancelAlbumRenamesBtn');
+    const matchTracksBtn = document.getElementById('matchTracksBtn');
 
     if (matchArtistsBtn) {
         matchArtistsBtn.addEventListener('click', handleMatchArtists);
     }
-    if (renameArtistFoldersBtn) {
-        renameArtistFoldersBtn.addEventListener('click', handleRenameArtistFolders);
-    }
-    if (executeArtistRenamesBtn) {
-        executeArtistRenamesBtn.addEventListener('click', handleExecuteArtistRenames);
-    }
-    if (cancelArtistRenamesBtn) {
-        cancelArtistRenamesBtn.addEventListener('click', () => {
-            document.getElementById('artistRenamePreviewContainer').style.display = 'none';
-        });
-    }
     if (matchAlbumsBtn) {
         matchAlbumsBtn.addEventListener('click', handleMatchAlbums);
     }
-    if (renameAlbumFoldersBtn) {
-        renameAlbumFoldersBtn.addEventListener('click', handleRenameAlbumFolders);
+    if (matchTracksBtn) {
+        matchTracksBtn.addEventListener('click', handleMatchTracks);
     }
-    if (executeAlbumRenamesBtn) {
-        executeAlbumRenamesBtn.addEventListener('click', handleExecuteAlbumRenames);
-    }
-    if (cancelAlbumRenamesBtn) {
-        cancelAlbumRenamesBtn.addEventListener('click', () => {
-            document.getElementById('albumRenamePreviewContainer').style.display = 'none';
-        });
-    }
+
     if (previewRenamesBtn) {
         previewRenamesBtn.addEventListener('click', handlePreviewRenames);
     }
@@ -1897,6 +1779,7 @@ async function handleMatchArtists() {
 
     const matchArtistsBtn = document.getElementById('matchArtistsBtn');
     const matchAlbumsBtn = document.getElementById('matchAlbumsBtn');
+    const matchTracksBtn = document.getElementById('matchTracksBtn');
     const progressContainer = document.getElementById('matchProgressContainer');
     const progressText = document.getElementById('matchProgressText');
     const progressBar = document.getElementById('matchProgressBar');
@@ -1905,6 +1788,7 @@ async function handleMatchArtists() {
     // Show progress UI
     matchArtistsBtn.disabled = true;
     matchAlbumsBtn.disabled = true;
+    matchTracksBtn.disabled = true;
     progressContainer.style.display = 'block';
     statsContainer.style.display = 'none';
 
@@ -1960,12 +1844,10 @@ async function handleMatchArtists() {
 
                             addScanLog(`Phase 1 complete! Matched ${data.stats.autoApprove + data.stats.review}/${data.stats.total} artists`, 'success');
 
-                            // Show "Rename Artist Folders" button instead of enabling Phase 2 immediately
-                            const renameArtistFoldersBtn = document.getElementById('renameArtistFoldersBtn');
-                            renameArtistFoldersBtn.style.display = 'inline-block';
-
-                            // Hide Phase 1 button
-                            matchArtistsBtn.style.display = 'none';
+                            // Enable Phase 2 button
+                            matchAlbumsBtn.disabled = false;
+                            matchAlbumsBtn.classList.remove('button-secondary');
+                            matchAlbumsBtn.classList.add('button-primary');
 
                             // Scroll to results
                             setTimeout(() => scrollToElement('#matchStatsContainer'), 400);
@@ -1989,360 +1871,6 @@ async function handleMatchArtists() {
 }
 
 /**
- * Handle Rename Artist Folders button click
- * Shows preview of artist folder renames
- */
-function handleRenameArtistFolders() {
-    console.log('[Matcher] Showing artist folder rename preview...');
-
-    if (!artistMatchResults || artistMatchResults.length === 0) {
-        addScanLog('No artist match results available', 'error');
-        return;
-    }
-
-    // Build list of artist renames (only those that changed)
-    const renames = [];
-    artistMatchResults.forEach(result => {
-        const originalArtist = result.originalArtist; // Artist name from metadata
-        const folderName = result.folderName || result.originalArtist; // Actual folder name on disk
-        const newArtist = result.mbMatch?.artist || originalArtist;
-
-        // Only include if name changed and accepted
-        if (originalArtist !== newArtist && result.accepted && !result.skipped) {
-            renames.push({
-                originalArtist,
-                folderName, // CRITICAL: Use actual folder name for rename operation
-                newArtist,
-                fileCount: result.fileCount,
-                files: result.files || []
-            });
-        }
-    });
-
-    if (renames.length === 0) {
-        addScanLog('No artist folder renames needed. All artists are correct!', 'info');
-        // Enable Phase 2 directly since no renames needed
-        const matchAlbumsBtn = document.getElementById('matchAlbumsBtn');
-        matchAlbumsBtn.disabled = false;
-        matchAlbumsBtn.classList.remove('button-secondary');
-        matchAlbumsBtn.classList.add('button-primary');
-        document.getElementById('renameArtistFoldersBtn').style.display = 'none';
-        return;
-    }
-
-    // Display rename preview
-    const previewList = document.getElementById('artistRenamePreviewList');
-    let html = '<div class="rename-preview-items">';
-
-    renames.forEach((rename, i) => {
-        const showFolderName = rename.folderName !== rename.originalArtist;
-        html += `
-            <div class="rename-preview-item" style="padding: 15px; border: 1px solid #333; border-radius: 5px; margin-bottom: 10px; background: #1a1a1a;">
-                <div style="display: flex; align-items: center; gap: 10px; margin-bottom: 8px;">
-                    <div style="flex: 1;">
-                        ${showFolderName ? `<div style="color: #888; font-size: 12px; margin-bottom: 3px;">Folder: ${rename.folderName}</div>` : ''}
-                        <div style="color: #e74c3c; font-size: 14px; margin-bottom: 5px;">❌ ${rename.originalArtist}</div>
-                        <div style="color: #2ecc71; font-size: 14px;">✅ ${rename.newArtist}</div>
-                    </div>
-                    <div style="color: #888; font-size: 12px;">${rename.fileCount} files</div>
-                </div>
-            </div>
-        `;
-    });
-
-    html += '</div>';
-    previewList.innerHTML = html;
-
-    // Show preview container
-    document.getElementById('artistRenamePreviewContainer').style.display = 'block';
-
-    // Store renames for execution
-    window.pendingArtistRenames = renames;
-
-    addScanLog(`Preview ready: ${renames.length} artist folder(s) will be renamed`, 'info');
-    scrollToElement('#artistRenamePreviewContainer');
-}
-
-/**
- * Execute artist folder renames
- */
-async function handleExecuteArtistRenames() {
-    console.log('[Matcher] Executing artist folder renames...');
-
-    if (!window.pendingArtistRenames || window.pendingArtistRenames.length === 0) {
-        addScanLog('No renames to execute', 'error');
-        return;
-    }
-
-    const renames = window.pendingArtistRenames;
-    const executeBtn = document.getElementById('executeArtistRenamesBtn');
-    executeBtn.disabled = true;
-    executeBtn.textContent = 'Renaming...';
-
-    try {
-        // Get base music path from scanData
-        const musicPath = scanData.musicPath || document.getElementById('musicPath').value;
-
-        const response = await fetch('http://localhost:3000/api/organizer/rename-artists', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-                musicPath,
-                renames
-            })
-        });
-
-        const data = await response.json();
-
-        if (data.success) {
-            addScanLog(`✅ Renamed ${data.renamedCount} artist folder(s) successfully!`, 'success');
-
-            // Update scanData with new paths
-            if (scanData && scanData.files) {
-                scanData.files.forEach(file => {
-                    // Match by folder artist name (not metadata artist)
-                    const rename = renames.find(r => r.originalArtist === file.folderArtist);
-                    if (rename) {
-                        // Update file path
-                        file.filePath = file.filePath.replace(
-                            `/${rename.originalArtist}/`,
-                            `/${rename.newArtist}/`
-                        );
-                        file.relativePath = file.relativePath.replace(
-                            `${rename.originalArtist}/`,
-                            `${rename.newArtist}/`
-                        );
-                        file.folderPath = file.folderPath.replace(
-                            `${rename.originalArtist}/`,
-                            `${rename.newArtist}/`
-                        );
-                        // Update folder artist
-                        file.folderArtist = rename.newArtist;
-                    }
-                });
-            }
-
-            // Hide preview container
-            document.getElementById('artistRenamePreviewContainer').style.display = 'none';
-
-            // Hide "Rename Artist Folders" button
-            document.getElementById('renameArtistFoldersBtn').style.display = 'none';
-
-            // Enable Phase 2 button
-            const matchAlbumsBtn = document.getElementById('matchAlbumsBtn');
-            matchAlbumsBtn.disabled = false;
-            matchAlbumsBtn.classList.remove('button-secondary');
-            matchAlbumsBtn.classList.add('button-primary');
-
-            addScanLog('✅ Artist folders renamed! You can now proceed to Phase 2: Match Albums', 'success');
-
-            // Auto-scroll to Phase 2 button
-            setTimeout(() => {
-                scrollToElement(matchAlbumsBtn);
-            }, 100);
-        } else {
-            addScanLog(`Error renaming artists: ${data.error}`, 'error');
-        }
-    } catch (error) {
-        console.error('[Matcher] Rename error:', error);
-        addScanLog(`Error renaming artists: ${error.message}`, 'error');
-    } finally {
-        executeBtn.disabled = false;
-        executeBtn.textContent = '✅ Execute Artist Renames';
-    }
-}
-
-/**
- * Handle Rename Album Folders button click
- */
-async function handleRenameAlbumFolders() {
-    console.log('[Matcher] Generating album folder rename preview...');
-
-    if (!albumMatchResults || albumMatchResults.length === 0) {
-        addScanLog('No album match results available. Please run Phase 2 first.', 'error');
-        return;
-    }
-
-    // Build list of album renames (only those that changed)
-    const renames = [];
-    albumMatchResults.forEach(result => {
-        const originalArtist = result.originalArtist;
-        const originalAlbum = result.originalAlbum;
-        const folderArtist = result.folderArtist || originalArtist; // Actual artist folder name
-        const folderAlbum = result.folderAlbum || originalAlbum; // Actual album folder name
-        const newArtist = result.mbMatch?.artist || originalArtist;
-        const newAlbum = result.mbMatch?.album || originalAlbum;
-
-        // Only include if album name changed and accepted
-        const albumChanged = originalAlbum !== newAlbum;
-        const artistChanged = originalArtist !== newArtist;
-
-        if ((albumChanged || artistChanged) && result.accepted && !result.skipped) {
-            renames.push({
-                originalArtist,
-                originalAlbum,
-                folderArtist, // Use actual folder names for rename operation
-                folderAlbum,
-                newArtist,
-                newAlbum,
-                fileCount: result.fileCount,
-                files: result.files || []
-            });
-        }
-    });
-
-    if (renames.length === 0) {
-        addScanLog('No album folder renames needed. All albums are correct!', 'info');
-        document.getElementById('renameAlbumFoldersBtn').style.display = 'none';
-        return;
-    }
-
-    // Display rename preview
-    const previewList = document.getElementById('albumRenamePreviewList');
-    let html = '<div class="rename-preview-items">';
-
-    renames.forEach((rename, i) => {
-        const artistChanged = rename.originalArtist !== rename.newArtist;
-        const albumChanged = rename.originalAlbum !== rename.newAlbum;
-        const showFolderNames = (rename.folderArtist !== rename.originalArtist) || (rename.folderAlbum !== rename.originalAlbum);
-
-        html += `
-            <div class="rename-preview-item" style="padding: 15px; border: 1px solid #333; border-radius: 5px; margin-bottom: 10px; background: #1a1a1a;">
-                <div style="display: flex; align-items: center; gap: 10px; margin-bottom: 8px;">
-                    <div style="flex: 1;">
-                        ${showFolderNames ? `<div style="color: #888; font-size: 12px; margin-bottom: 3px;">Folder: ${rename.folderArtist}/${rename.folderAlbum}</div>` : ''}
-                        <div style="color: #e74c3c; font-size: 14px; margin-bottom: 5px;">❌ ${rename.originalArtist} - ${rename.originalAlbum}</div>
-                        <div style="color: #2ecc71; font-size: 14px;">✅ ${rename.newArtist} - ${rename.newAlbum}</div>
-                        ${artistChanged && albumChanged ? '<div style="color: #f39c12; font-size: 12px; margin-top: 3px;">⚠️ Both artist and album will be updated</div>' : ''}
-                    </div>
-                    <div style="color: #888; font-size: 12px;">${rename.fileCount} files</div>
-                </div>
-            </div>
-        `;
-    });
-
-    html += '</div>';
-    previewList.innerHTML = html;
-
-    // Show preview container
-    document.getElementById('albumRenamePreviewContainer').style.display = 'block';
-
-    // Store renames for execution
-    window.pendingAlbumRenames = renames;
-
-    addScanLog(`Preview ready: ${renames.length} album folder(s) will be renamed`, 'info');
-    scrollToElement('#albumRenamePreviewContainer');
-}
-
-/**
- * Execute album folder renames
- */
-async function handleExecuteAlbumRenames() {
-    console.log('[Matcher] Executing album folder renames...');
-
-    if (!window.pendingAlbumRenames || window.pendingAlbumRenames.length === 0) {
-        addScanLog('No renames to execute', 'error');
-        return;
-    }
-
-    const renames = window.pendingAlbumRenames;
-    const executeBtn = document.getElementById('executeAlbumRenamesBtn');
-    executeBtn.disabled = true;
-    executeBtn.textContent = 'Renaming...';
-
-    try {
-        // Get base music path from scanData
-        const musicPath = scanData.musicPath || document.getElementById('musicPath').value;
-
-        const response = await fetch('http://localhost:3000/api/organizer/rename-albums', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-                musicPath,
-                renames
-            })
-        });
-
-        const data = await response.json();
-
-        if (data.success) {
-            addScanLog(`✅ Renamed ${data.renamedCount} album folder(s) successfully!`, 'success');
-            if (data.metadataUpdatedCount > 0) {
-                addScanLog(`✅ Updated metadata in ${data.metadataUpdatedCount} files`, 'success');
-            }
-
-            // Update scanData with new paths
-            if (scanData && scanData.files) {
-                scanData.files.forEach(file => {
-                    // Match by folder artist/album names
-                    const rename = renames.find(r =>
-                        r.originalArtist === file.folderArtist &&
-                        r.originalAlbum === (file.metadata?.album || file.folderAlbum)
-                    );
-                    if (rename) {
-                        // Update file paths (with safety checks)
-                        if (file.filePath) {
-                            file.filePath = file.filePath.replace(
-                                `/${rename.folderArtist}/${rename.folderAlbum}/`,
-                                `/${rename.newArtist}/${rename.newAlbum}/`
-                            );
-                        }
-                        if (file.relativePath) {
-                            file.relativePath = file.relativePath.replace(
-                                `${rename.folderArtist}/${rename.folderAlbum}/`,
-                                `${rename.newArtist}/${rename.newAlbum}/`
-                            );
-                        }
-                        if (file.folderPath) {
-                            file.folderPath = file.folderPath.replace(
-                                `${rename.folderArtist}/${rename.folderAlbum}`,
-                                `${rename.newArtist}/${rename.newAlbum}`
-                            );
-                        }
-                        // Update folder names
-                        file.folderArtist = rename.newArtist;
-                        file.folderAlbum = rename.newAlbum;
-                        // Update metadata
-                        if (file.metadata) {
-                            file.metadata.artist = rename.newArtist;
-                            file.metadata.album = rename.newAlbum;
-                        }
-                    }
-                });
-            }
-
-            // Hide preview container
-            document.getElementById('albumRenamePreviewContainer').style.display = 'none';
-
-            // Hide "Rename Album Folders" button
-            document.getElementById('renameAlbumFoldersBtn').style.display = 'none';
-
-            addScanLog('✅ Album folders renamed and track metadata updated!', 'success');
-
-            // Show Move to Live Library section
-            const moveSection = document.getElementById('moveToLibrarySection');
-            if (moveSection) {
-                moveSection.style.display = 'block';
-                initMoveToLibrary(); // Initialize event listeners for Move section
-                addScanLog('📦 Ready to move files to live Plex library - scroll down', 'info');
-                scrollToElement('#moveToLibrarySection');
-            }
-        } else {
-            addScanLog(`Error renaming albums: ${data.error}`, 'error');
-            if (data.errors && data.errors.length > 0) {
-                data.errors.forEach(err => addScanLog(`  - ${err}`, 'error'));
-            }
-        }
-    } catch (error) {
-        console.error('[Matcher] Rename error:', error);
-        addScanLog(`Error renaming albums: ${error.message}`, 'error');
-    } finally {
-        executeBtn.disabled = false;
-        executeBtn.textContent = '✅ Execute Album Renames';
-    }
-}
-
-/**
  * Handle Phase 2: Match Albums
  */
 async function handleMatchAlbums() {
@@ -2355,6 +1883,7 @@ async function handleMatchAlbums() {
 
     const matchArtistsBtn = document.getElementById('matchArtistsBtn');
     const matchAlbumsBtn = document.getElementById('matchAlbumsBtn');
+    const matchTracksBtn = document.getElementById('matchTracksBtn');
     const progressContainer = document.getElementById('matchProgressContainer');
     const progressText = document.getElementById('matchProgressText');
     const progressBar = document.getElementById('matchProgressBar');
@@ -2363,6 +1892,7 @@ async function handleMatchAlbums() {
     // Show progress UI
     matchArtistsBtn.disabled = true;
     matchAlbumsBtn.disabled = true;
+    matchTracksBtn.disabled = true;
     progressContainer.style.display = 'block';
     statsContainer.style.display = 'none';
 
@@ -2414,10 +1944,10 @@ async function handleMatchAlbums() {
 
                             addScanLog(`Phase 2 complete! Matched ${data.stats.autoApprove + data.stats.review}/${data.stats.total} albums`, 'success');
 
-                            // Show "Rename Album Folders" button (Phase 2.5)
-                            const renameAlbumFoldersBtn = document.getElementById('renameAlbumFoldersBtn');
-                            renameAlbumFoldersBtn.style.display = 'inline-block';
-                            addScanLog('Click "Rename Album Folders" to apply changes before proceeding to Phase 3', 'info');
+                            // Enable Phase 3 button
+                            matchTracksBtn.disabled = false;
+                            matchTracksBtn.classList.remove('button-secondary');
+                            matchTracksBtn.classList.add('button-primary');
 
                             // Scroll to results
                             setTimeout(() => scrollToElement('#matchStatsContainer'), 400);
@@ -2438,6 +1968,109 @@ async function handleMatchAlbums() {
     } finally {
         matchArtistsBtn.disabled = false;
         matchAlbumsBtn.disabled = false;
+    }
+}
+
+/**
+ * Handle Phase 3: Match Tracks
+ */
+async function handleMatchTracks() {
+    console.log('[Matcher] Phase 3: Starting track matching...');
+
+    if (!artistMatchResults || artistMatchResults.length === 0) {
+        addScanLog('Please complete Phase 1 (Match Artists) first.', 'error');
+        return;
+    }
+
+    if (!albumMatchResults || albumMatchResults.length === 0) {
+        addScanLog('Please complete Phase 2 (Match Albums) first.', 'error');
+        return;
+    }
+
+    const matchArtistsBtn = document.getElementById('matchArtistsBtn');
+    const matchAlbumsBtn = document.getElementById('matchAlbumsBtn');
+    const matchTracksBtn = document.getElementById('matchTracksBtn');
+    const progressContainer = document.getElementById('matchProgressContainer');
+    const progressText = document.getElementById('matchProgressText');
+    const progressBar = document.getElementById('matchProgressBar');
+    const statsContainer = document.getElementById('matchStatsContainer');
+
+    // Show progress UI
+    matchArtistsBtn.disabled = true;
+    matchAlbumsBtn.disabled = true;
+    matchTracksBtn.disabled = true;
+    progressContainer.style.display = 'block';
+    statsContainer.style.display = 'none';
+
+    try {
+        const eventSource = await fetch('http://localhost:3000/api/matcher/match-tracks', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                files: scanData.files,
+                artistMatches: artistMatchResults,
+                albumMatches: albumMatchResults
+            })
+        });
+
+        const reader = eventSource.body.getReader();
+        const decoder = new TextDecoder();
+
+        while (true) {
+            const { done, value } = await reader.read();
+            if (done) break;
+
+            const chunk = decoder.decode(value);
+            const lines = chunk.split('\n');
+
+            for (const line of lines) {
+                if (line.startsWith('data: ')) {
+                    try {
+                        const data = JSON.parse(line.slice(6));
+
+                        if (data.type === 'progress') {
+                            progressText.textContent = `Phase 3: Matching track "${data.currentFile || ''}"... (${data.processed}/${data.total})`;
+                            progressBar.style.width = `${data.progress}%`;
+                        } else if (data.type === 'complete') {
+                            console.log('[Matcher] Phase 3 complete:', data);
+                            matchResults = data.results;
+
+                            progressText.textContent = data.message;
+                            progressBar.style.width = '100%';
+
+                            // Show statistics
+                            displayMatchStatistics(data.stats);
+                            statsContainer.style.display = 'block';
+
+                            // Show track match results (use existing displayMatchResults)
+                            displayMatchResults(matchResults, 'all');
+                            document.getElementById('matchResultsContainer').style.display = 'block';
+
+                            // Show Step 2: Output Directory configuration
+                            document.getElementById('outputDirectoryContainer').style.display = 'block';
+
+                            addScanLog(`Phase 3 complete! Matched ${data.stats.matched}/${data.stats.total} tracks`, 'success');
+
+                            // Scroll to results
+                            setTimeout(() => scrollToElement('#matchStatsContainer'), 400);
+                        } else if (data.type === 'error') {
+                            progressText.textContent = `Error: ${data.error}`;
+                            addScanLog(`Phase 3 error: ${data.error}`, 'error');
+                        }
+                    } catch (parseError) {
+                        console.error('[Matcher] Parse error:', parseError);
+                    }
+                }
+            }
+        }
+    } catch (error) {
+        console.error('[Matcher] Phase 3 error:', error);
+        progressText.textContent = `Error: ${error.message}`;
+        addScanLog(`Phase 3 error: ${error.message}`, 'error');
+    } finally {
+        matchArtistsBtn.disabled = false;
+        matchAlbumsBtn.disabled = false;
+        matchTracksBtn.disabled = false;
     }
 }
 
@@ -2483,11 +2116,11 @@ function displayArtistMatchResults(results, filter = 'all') {
 
         const mbMatch = result.mbMatch;
         const matchInfo = mbMatch ?
-            `<strong>MusicBrainz Match:</strong> ${mbMatch.artist || result.originalArtist || 'Unknown'}` :
+            `<strong>MusicBrainz Match:</strong> ${mbMatch.artist}` :
             `<strong>Status:</strong> No match found`;
 
-        // Determine if action buttons are needed (hide if already accepted/skipped/manually overridden)
-        const needsAction = (category === 'review' || category === 'manual') && !result.accepted && !result.skipped && !result.manualOverride;
+        // Determine if action buttons are needed
+        const needsAction = (category === 'review' || category === 'manual');
         const actionButtons = needsAction ? `
             <div class="match-action-buttons">
                 ${category === 'review' ? `<button class="action-btn accept-btn" data-phase="artist" data-index="${filteredResults.indexOf(result)}" title="Accept this match">✅ Accept</button>` : ''}
@@ -2627,7 +2260,7 @@ async function openArtistSearchModal(result, index) {
             const response = await fetch(`http://localhost:3000/api/musicbrainz/search-artist`, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ artist: query })
+                body: JSON.stringify({ query, limit: 5 })
             });
             const data = await response.json();
 
@@ -2640,12 +2273,8 @@ async function openArtistSearchModal(result, index) {
             data.results.forEach((artist, i) => {
                 html += `
                     <div class="search-result-item" data-index="${i}" style="padding: 15px; border-bottom: 1px solid #333; cursor: pointer; background: #1a1a1a; margin-bottom: 10px; border-radius: 5px;">
-                        <div style="font-weight: bold; margin-bottom: 5px; color: #fff;">${artist.name || 'Unknown Artist'}</div>
+                        <div style="font-weight: bold; margin-bottom: 5px;">${artist.artist || 'Unknown Artist'}</div>
                         <div style="font-size: 0.9em; color: #888;">
-                            ${artist.sortName ? `Sort Name: ${artist.sortName}<br>` : ''}
-                            ${artist.disambiguation ? `(${artist.disambiguation})<br>` : ''}
-                            ${artist.type ? `Type: ${artist.type}<br>` : ''}
-                            ${artist.country ? `Country: ${artist.country}<br>` : ''}
                             Confidence: ${artist.confidence}%
                         </div>
                     </div>
@@ -2658,10 +2287,8 @@ async function openArtistSearchModal(result, index) {
                 item.addEventListener('click', () => {
                     const selectedArtist = data.results[i];
                     result.mbMatch = {
-                        artist: selectedArtist.name,
-                        mbid: selectedArtist.id,
-                        sortName: selectedArtist.sortName,
-                        disambiguation: selectedArtist.disambiguation
+                        artist: selectedArtist.artist,
+                        mbid: selectedArtist.mbid || ''
                     };
                     result.confidence = selectedArtist.confidence;
                     result.category = selectedArtist.confidence >= 90 ? 'auto_approve' :
@@ -2675,7 +2302,7 @@ async function openArtistSearchModal(result, index) {
                     searchTitleInput.parentElement.style.display = 'block';
                     displayArtistMatchResults(artistMatchResults, 'all');
                     attachArtistMatchActionListeners();
-                    addScanLog(`Updated artist match for "${result.originalArtist}" → "${selectedArtist.name}"`, 'success');
+                    addScanLog(`Updated artist match for "${result.originalArtist}" → "${selectedArtist.artist}"`, 'success');
                 });
             });
 
@@ -2812,84 +2439,62 @@ function attachAlbumMatchActionListeners() {
  * Open search modal for Phase 2 album matching
  */
 async function openAlbumSearchModal(result, index) {
-    const modal = document.getElementById('manualSearchModal');
-    const searchArtistInput = document.getElementById('searchArtist');
-    const searchAlbumInput = document.getElementById('searchAlbum');
-    const searchTitleInput = document.getElementById('searchTitle');
-    const searchButton = document.getElementById('performSearchBtn');
-    const resultsContainer = document.getElementById('searchResultsContainer');
-    const resultsList = document.getElementById('searchResultsList');
+    const modal = document.getElementById('searchModal');
+    const modalTitle = document.getElementById('searchModalTitle');
+    const searchInput = document.getElementById('manualSearchInput');
+    const searchButton = document.getElementById('manualSearchButton');
+    const resultsDiv = document.getElementById('manualSearchResults');
 
-    // Pre-fill artist and album search fields
-    searchArtistInput.value = result.originalArtist;
-    searchAlbumInput.value = result.originalAlbum;
-    searchTitleInput.value = '';
-
-    // Show artist and album fields, hide title field for album search
-    searchArtistInput.parentElement.style.display = 'block';
-    searchAlbumInput.parentElement.style.display = 'block';
-    searchTitleInput.parentElement.style.display = 'none';
-
-    resultsContainer.style.display = 'none';
-    resultsList.innerHTML = '';
+    modalTitle.textContent = `Search for Album: ${result.originalAlbum} by ${result.originalArtist}`;
+    searchInput.value = `${result.originalArtist} ${result.originalAlbum}`;
+    resultsDiv.innerHTML = '';
 
     // Show modal
     modal.style.display = 'block';
 
-    // Remove old listener and create new one
-    const newSearchButton = searchButton.cloneNode(true);
-    searchButton.parentNode.replaceChild(newSearchButton, searchButton);
-
     // Search button handler
-    newSearchButton.onclick = async () => {
-        const artistQuery = searchArtistInput.value.trim();
-        const albumQuery = searchAlbumInput.value.trim();
+    searchButton.onclick = async () => {
+        const query = searchInput.value.trim();
+        if (!query) return;
 
-        if (!artistQuery || !albumQuery) return;
-
-        resultsContainer.style.display = 'block';
-        resultsList.innerHTML = '<div style="padding: 20px; text-align: center;">Searching MusicBrainz...</div>';
+        resultsDiv.innerHTML = '<div style="padding: 20px; text-align: center;">Searching MusicBrainz...</div>';
 
         try {
-            const response = await fetch(`http://localhost:3000/api/musicbrainz/search-release`, {
+            const response = await fetch(`http://localhost:3000/api/musicbrainz/search-album`, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ artist: artistQuery, album: albumQuery })
+                body: JSON.stringify({ query, limit: 5 })
             });
             const data = await response.json();
 
             if (!data.results || data.results.length === 0) {
-                resultsList.innerHTML = '<div style="padding: 20px; text-align: center;">No results found</div>';
+                resultsDiv.innerHTML = '<div style="padding: 20px; text-align: center;">No results found</div>';
                 return;
             }
 
-            let html = '';
+            let html = '<div class="search-results-list">';
             data.results.forEach((album, i) => {
                 html += `
-                    <div class="search-result-item" data-index="${i}" style="padding: 15px; border-bottom: 1px solid #333; cursor: pointer; background: #1a1a1a; margin-bottom: 10px; border-radius: 5px;">
-                        <div style="font-weight: bold; margin-bottom: 5px; color: #fff;">${album.title || 'Unknown Album'}</div>
+                    <div class="search-result-item" data-index="${i}" style="padding: 15px; border-bottom: 1px solid #333; cursor: pointer;">
+                        <div style="font-weight: bold; margin-bottom: 5px;">${album.album || 'Unknown Album'}</div>
                         <div style="font-size: 0.9em; color: #bbb; margin-bottom: 3px;">by ${album.artist || 'Unknown Artist'}</div>
                         <div style="font-size: 0.9em; color: #888;">
-                            ${album.date ? `Release Date: ${album.date}<br>` : ''}
-                            ${album.country ? `Country: ${album.country}<br>` : ''}
-                            ${album.trackCount ? `Tracks: ${album.trackCount}<br>` : ''}
                             Confidence: ${album.confidence}%
                         </div>
                     </div>
                 `;
             });
-            resultsList.innerHTML = html;
+            html += '</div>';
+            resultsDiv.innerHTML = html;
 
             // Attach click handlers to search results
-            resultsList.querySelectorAll('.search-result-item').forEach((item, i) => {
+            resultsDiv.querySelectorAll('.search-result-item').forEach((item, i) => {
                 item.addEventListener('click', () => {
                     const selectedAlbum = data.results[i];
                     result.mbMatch = {
                         artist: selectedAlbum.artist,
-                        album: selectedAlbum.title,
-                        mbid: selectedAlbum.id,
-                        date: selectedAlbum.date,
-                        trackCount: selectedAlbum.trackCount
+                        album: selectedAlbum.album,
+                        mbid: selectedAlbum.mbid || ''
                     };
                     result.confidence = selectedAlbum.confidence;
                     result.category = selectedAlbum.confidence >= 90 ? 'auto_approve' :
@@ -2898,17 +2503,25 @@ async function openAlbumSearchModal(result, index) {
                     result.accepted = true;
 
                     modal.style.display = 'none';
-                    // Restore field visibility
-                    searchTitleInput.parentElement.style.display = 'block';
                     displayAlbumMatchResults(albumMatchResults, 'all');
                     attachAlbumMatchActionListeners();
-                    addScanLog(`Updated album match for "${result.originalAlbum}" → "${selectedAlbum.artist} - ${selectedAlbum.title}"`, 'success');
+                    addScanLog(`Updated album match for "${result.originalAlbum}" → "${selectedAlbum.artist} - ${selectedAlbum.album}"`, 'success');
                 });
             });
 
         } catch (error) {
             console.error('[Search] Error:', error);
-            resultsList.innerHTML = `<div style="padding: 20px; color: #e74c3c;">Error: ${error.message}</div>`;
+            resultsDiv.innerHTML = `<div style="padding: 20px; color: #e74c3c;">Error: ${error.message}</div>`;
+        }
+    };
+
+    // Close modal handlers
+    document.getElementById('closeSearchModal').onclick = () => {
+        modal.style.display = 'none';
+    };
+    window.onclick = (e) => {
+        if (e.target === modal) {
+            modal.style.display = 'none';
         }
     };
 }
@@ -2917,39 +2530,32 @@ async function openAlbumSearchModal(result, index) {
  * Open edit modal for Phase 2 album matching
  */
 function openAlbumEditModal(result, index) {
-    const modal = document.getElementById('metadataEditorModal');
-    const artistInput = document.getElementById('editArtist');
-    const albumInput = document.getElementById('editAlbum');
-    const titleInput = document.getElementById('editTitle');
-    const yearInput = document.getElementById('editYear');
-    const trackInput = document.getElementById('editTrack');
-    const saveButton = document.getElementById('saveMetadataBtn');
+    const modal = document.getElementById('editModal');
+    const modalTitle = document.getElementById('editModalTitle');
+    const form = document.getElementById('editMetadataForm');
+
+    modalTitle.textContent = `Edit Album: ${result.originalAlbum} by ${result.originalArtist}`;
 
     // Populate form with current data
-    artistInput.value = result.mbMatch?.artist || result.originalArtist;
-    albumInput.value = result.mbMatch?.album || result.originalAlbum;
-    titleInput.value = '';
-    yearInput.value = '';
-    trackInput.value = '';
+    document.getElementById('editArtist').value = result.mbMatch?.artist || result.originalArtist;
+    document.getElementById('editAlbum').value = result.mbMatch?.album || result.originalAlbum;
 
-    // Show artist and album fields, hide track-specific fields for album editing
-    artistInput.parentElement.style.display = 'block';
-    albumInput.parentElement.style.display = 'block';
-    titleInput.parentElement.style.display = 'none';
-    yearInput.parentElement.style.display = 'none';
-    trackInput.parentElement.style.display = 'none';
+    // Show artist and album fields, hide track-specific fields
+    document.getElementById('editArtistGroup').style.display = 'block';
+    document.getElementById('editAlbumGroup').style.display = 'block';
+    document.getElementById('editTitleGroup').style.display = 'none';
+    document.getElementById('editYearGroup').style.display = 'none';
+    document.getElementById('editTrackNumberGroup').style.display = 'none';
 
     // Show modal
     modal.style.display = 'block';
 
-    // Remove old listener and create new one
-    const newSaveButton = saveButton.cloneNode(true);
-    saveButton.parentNode.replaceChild(newSaveButton, saveButton);
-
     // Save button handler
-    newSaveButton.onclick = () => {
-        const newArtist = artistInput.value.trim();
-        const newAlbum = albumInput.value.trim();
+    form.onsubmit = (e) => {
+        e.preventDefault();
+
+        const newArtist = document.getElementById('editArtist').value.trim();
+        const newAlbum = document.getElementById('editAlbum').value.trim();
 
         if (!newArtist || !newAlbum) {
             alert('Artist and Album names cannot be empty');
@@ -2968,14 +2574,19 @@ function openAlbumEditModal(result, index) {
         result.accepted = true;
 
         modal.style.display = 'none';
-        // Restore field visibility
-        titleInput.parentElement.style.display = 'block';
-        yearInput.parentElement.style.display = 'block';
-        trackInput.parentElement.style.display = 'block';
-
         displayAlbumMatchResults(albumMatchResults, 'all');
         attachAlbumMatchActionListeners();
         addScanLog(`Manually edited album: "${result.originalAlbum}" → "${newArtist} - ${newAlbum}"`, 'success');
+    };
+
+    // Close modal handlers
+    document.getElementById('closeEditModal').onclick = () => {
+        modal.style.display = 'none';
+    };
+    window.onclick = (e) => {
+        if (e.target === modal) {
+            modal.style.display = 'none';
+        }
     };
 }
 
@@ -3008,8 +2619,8 @@ function displayAlbumMatchResults(results, filter = 'all') {
             `<strong>MusicBrainz Match:</strong> ${mbMatch.artist} - ${mbMatch.album}` :
             `<strong>Status:</strong> No match found`;
 
-        // Determine if action buttons are needed (hide if already accepted/skipped/manually overridden)
-        const needsAction = (category === 'review' || category === 'manual') && !result.accepted && !result.skipped && !result.manualOverride;
+        // Determine if action buttons are needed
+        const needsAction = (category === 'review' || category === 'manual');
         const actionButtons = needsAction ? `
             <div class="match-action-buttons">
                 ${category === 'review' ? `<button class="action-btn accept-btn" data-phase="album" data-index="${filteredResults.indexOf(result)}" title="Accept this match">✅ Accept</button>` : ''}
@@ -3080,8 +2691,8 @@ function displayMatchResults(results, filter = 'all') {
             `<strong>MusicBrainz Match:</strong> ${mbMatch.artist} - ${mbMatch.title}` :
             `<strong>Status:</strong> ${result.reason || 'No match found'}`;
 
-        // Determine if action buttons are needed (hide if already accepted/skipped/manually overridden)
-        const needsAction = (category === 'review' || category === 'manual') && !result.accepted && !result.skipped && !result.manualOverride;
+        // Determine if action buttons are needed
+        const needsAction = (category === 'review' || category === 'manual');
         const actionButtons = needsAction ? `
             <div class="match-action-buttons">
                 ${category === 'review' ? `<button class="action-btn accept-btn" data-phase="track" data-index="${filteredResults.indexOf(result)}" title="Accept this match">✅ Accept</button>` : ''}
@@ -3185,103 +2796,65 @@ function attachTrackMatchActionListeners() {
  * Open search modal for Phase 3 track matching
  */
 async function openTrackSearchModal(result, index) {
-    const modal = document.getElementById('manualSearchModal');
-    const searchArtistInput = document.getElementById('searchArtist');
-    const searchAlbumInput = document.getElementById('searchAlbum');
-    const searchTitleInput = document.getElementById('searchTitle');
-    const searchButton = document.getElementById('performSearchBtn');
-    const resultsContainer = document.getElementById('searchResultsContainer');
-    const resultsList = document.getElementById('searchResultsList');
+    const modal = document.getElementById('searchModal');
+    const modalTitle = document.getElementById('searchModalTitle');
+    const searchInput = document.getElementById('manualSearchInput');
+    const searchButton = document.getElementById('manualSearchButton');
+    const resultsDiv = document.getElementById('manualSearchResults');
 
-    // Pre-fill all three search fields for track search
-    searchArtistInput.value = result.originalMetadata.artist || '';
-    searchAlbumInput.value = result.originalMetadata.album || '';
-    searchTitleInput.value = result.originalMetadata.title || '';
-
-    // Show all fields for track search
-    searchArtistInput.parentElement.style.display = 'block';
-    searchAlbumInput.parentElement.style.display = 'block';
-    searchTitleInput.parentElement.style.display = 'block';
-
-    resultsContainer.style.display = 'none';
-    resultsList.innerHTML = '';
+    modalTitle.textContent = `Search for Track: ${result.originalMetadata.title}`;
+    searchInput.value = `${result.originalMetadata.artist} ${result.originalMetadata.title}`;
+    resultsDiv.innerHTML = '';
 
     // Show modal
     modal.style.display = 'block';
 
-    // Remove old listener and create new one
-    const newSearchButton = searchButton.cloneNode(true);
-    searchButton.parentNode.replaceChild(newSearchButton, searchButton);
-
     // Search button handler
-    newSearchButton.onclick = async () => {
-        const artistQuery = searchArtistInput.value.trim();
-        const albumQuery = searchAlbumInput.value.trim();
-        const titleQuery = searchTitleInput.value.trim();
+    searchButton.onclick = async () => {
+        const query = searchInput.value.trim();
+        if (!query) return;
 
-        if (!artistQuery || !titleQuery) return;
-
-        resultsContainer.style.display = 'block';
-        resultsList.innerHTML = '<div style="padding: 20px; text-align: center;">Searching MusicBrainz...</div>';
+        resultsDiv.innerHTML = '<div style="padding: 20px; text-align: center;">Searching MusicBrainz...</div>';
 
         try {
-            const response = await fetch(`http://localhost:3000/api/musicbrainz/search-recording`, {
+            const response = await fetch(`http://localhost:3000/api/musicbrainz/search`, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({
-                    artist: artistQuery,
-                    album: albumQuery,
-                    title: titleQuery
-                })
+                body: JSON.stringify({ query, limit: 5 })
             });
             const data = await response.json();
 
             if (!data.results || data.results.length === 0) {
-                resultsList.innerHTML = '<div style="padding: 20px; text-align: center;">No results found</div>';
+                resultsDiv.innerHTML = '<div style="padding: 20px; text-align: center;">No results found</div>';
                 return;
             }
 
-            let html = '';
+            let html = '<div class="search-results-list">';
             data.results.forEach((track, i) => {
-                // Extract album and year from first release
-                const firstRelease = track.releases && track.releases.length > 0 ? track.releases[0] : null;
-                const albumTitle = firstRelease ? firstRelease.title : 'Unknown Album';
-                const releaseDate = firstRelease && firstRelease.date ? firstRelease.date.substring(0, 4) : '';
-                const lengthMin = track.length ? Math.floor(track.length / 60000) : null;
-                const lengthSec = track.length ? Math.floor((track.length % 60000) / 1000) : null;
-                const lengthStr = lengthMin !== null ? `${lengthMin}:${lengthSec.toString().padStart(2, '0')}` : '';
-
                 html += `
-                    <div class="search-result-item" data-index="${i}" style="padding: 15px; border-bottom: 1px solid #333; cursor: pointer; background: #1a1a1a; margin-bottom: 10px; border-radius: 5px;">
-                        <div style="font-weight: bold; margin-bottom: 5px; color: #fff;">${track.title || 'Unknown Title'}</div>
+                    <div class="search-result-item" data-index="${i}" style="padding: 15px; border-bottom: 1px solid #333; cursor: pointer;">
+                        <div style="font-weight: bold; margin-bottom: 5px;">${track.title || 'Unknown Title'}</div>
                         <div style="font-size: 0.9em; color: #bbb; margin-bottom: 3px;">by ${track.artist || 'Unknown Artist'}</div>
-                        <div style="font-size: 0.9em; color: #999; margin-bottom: 3px;">Album: ${albumTitle}</div>
+                        <div style="font-size: 0.9em; color: #999; margin-bottom: 3px;">Album: ${track.album || 'Unknown Album'}</div>
                         <div style="font-size: 0.9em; color: #888;">
-                            ${releaseDate ? `Year: ${releaseDate}<br>` : ''}
-                            ${lengthStr ? `Length: ${lengthStr}<br>` : ''}
-                            ${track.releases && track.releases.length > 1 ? `Releases: ${track.releases.length}<br>` : ''}
-                            Confidence: ${track.confidence}%
+                            Confidence: ${track.confidence}%${track.year ? ` • ${track.year}` : ''}
                         </div>
                     </div>
                 `;
             });
-            resultsList.innerHTML = html;
+            html += '</div>';
+            resultsDiv.innerHTML = html;
 
             // Attach click handlers to search results
-            resultsList.querySelectorAll('.search-result-item').forEach((item, i) => {
+            resultsDiv.querySelectorAll('.search-result-item').forEach((item, i) => {
                 item.addEventListener('click', () => {
                     const selectedTrack = data.results[i];
-                    const firstRelease = selectedTrack.releases && selectedTrack.releases.length > 0 ? selectedTrack.releases[0] : null;
-                    const albumTitle = firstRelease ? firstRelease.title : '';
-                    const releaseDate = firstRelease && firstRelease.date ? firstRelease.date.substring(0, 4) : '';
-
                     result.mbMatch = {
                         artist: selectedTrack.artist,
-                        album: albumTitle,
+                        album: selectedTrack.album,
                         title: selectedTrack.title,
-                        year: releaseDate,
-                        mbid: selectedTrack.id,
-                        length: selectedTrack.length
+                        year: selectedTrack.year || '',
+                        mbid: selectedTrack.mbid || ''
                     };
                     result.confidence = selectedTrack.confidence;
                     result.category = selectedTrack.confidence >= 90 ? 'auto_approve' :
@@ -3298,7 +2871,17 @@ async function openTrackSearchModal(result, index) {
 
         } catch (error) {
             console.error('[Search] Error:', error);
-            resultsList.innerHTML = `<div style="padding: 20px; color: #e74c3c;">Error: ${error.message}</div>`;
+            resultsDiv.innerHTML = `<div style="padding: 20px; color: #e74c3c;">Error: ${error.message}</div>`;
+        }
+    };
+
+    // Close modal handlers
+    document.getElementById('closeSearchModal').onclick = () => {
+        modal.style.display = 'none';
+    };
+    window.onclick = (e) => {
+        if (e.target === modal) {
+            modal.style.display = 'none';
         }
     };
 }
@@ -3972,7 +3555,6 @@ function initMoveToLibrary() {
     console.log('[Move] Initializing Move to Live Library...');
 
     const moveSection = document.getElementById('moveToLibrarySection');
-    const fetchPlexPathBtn = document.getElementById('fetchPlexPathBtn');
     const validatePathBtn = document.getElementById('validatePathBtn');
     const planMoveBtn = document.getElementById('planMoveBtn');
     const executeMoveBtn = document.getElementById('executeMoveBtn');
@@ -3995,10 +3577,6 @@ function initMoveToLibrary() {
     }
 
     // Setup event listeners
-    if (fetchPlexPathBtn) {
-        fetchPlexPathBtn.addEventListener('click', handleFetchPlexPath);
-    }
-
     if (validatePathBtn) {
         validatePathBtn.addEventListener('click', handleValidatePath);
     }
@@ -4092,57 +3670,6 @@ function setupLiveLibraryDragAndDrop() {
             }
         }
     }, false);
-}
-
-/**
- * Handle fetching Plex library path automatically
- */
-async function handleFetchPlexPath() {
-    const statusEl = document.getElementById('pathValidationStatus');
-    const liveLibraryPathInput = document.getElementById('liveLibraryPath');
-    const button = document.getElementById('fetchPlexPathBtn');
-
-    // Check if Plex is connected
-    if (!plexConnectionData || !selectedLibraryId) {
-        showPathValidationStatus('error', 'Please connect to Plex first (scroll up to Plex section)');
-        return;
-    }
-
-    try {
-        button.disabled = true;
-        button.textContent = 'Fetching...';
-        showPathValidationStatus('loading', 'Fetching library path from Plex...');
-
-        const { serverIp, port, token } = plexConnectionData;
-
-        const response = await fetch('http://localhost:3000/api/organizer/plex-library-path', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-                serverIp,
-                port,
-                token,
-                libraryId: selectedLibraryId
-            })
-        });
-
-        const data = await response.json();
-
-        if (data.success && data.primaryPath) {
-            liveLibraryPathInput.value = data.primaryPath;
-            localStorage.setItem('liveLibraryPath', data.primaryPath);
-            showPathValidationStatus('success', `Path fetched from Plex: ${data.primaryPath}`);
-            addScanLog(`Plex library path: ${data.primaryPath}`, 'info');
-        } else {
-            showPathValidationStatus('error', data.error || 'Failed to fetch library path');
-        }
-    } catch (error) {
-        console.error('[Move] Fetch Plex path error:', error);
-        showPathValidationStatus('error', `Failed to fetch path: ${error.message}`);
-    } finally {
-        button.disabled = false;
-        button.textContent = '📡 Get from Plex';
-    }
 }
 
 /**

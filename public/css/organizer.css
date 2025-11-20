@@ -620,23 +620,28 @@
 
 .filter-btn {
     padding: 8px 16px;
-    border: 2px solid #ddd;
+    border: 2px solid #333;
     background: white;
+    color: #333;
     border-radius: 6px;
     cursor: pointer;
     font-size: 13px;
-    font-weight: 500;
+    font-weight: 600;
     transition: all 0.2s;
+    box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
 }
 
 .filter-btn:hover {
-    border-color: #999;
+    border-color: #000;
+    background: #f5f5f5;
+    box-shadow: 0 2px 6px rgba(0, 0, 0, 0.15);
 }
 
 .filter-btn.active {
-    background: #4CAF50;
+    background: #e31837;
     color: white;
-    border-color: #4CAF50;
+    border-color: #e31837;
+    box-shadow: 0 3px 8px rgba(227, 24, 55, 0.3);
 }
 
 /* Conflicts Table */
