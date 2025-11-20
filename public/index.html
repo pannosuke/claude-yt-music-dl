@@ -649,22 +649,20 @@
                     <form id="liveLibraryForm">
                         <div class="form-group">
                             <label for="liveLibraryPath">Live Library Path *</label>
-                            <div style="display: flex; gap: 8px; margin-bottom: 5px; align-items: stretch;">
-                                <input
-                                    type="text"
-                                    id="liveLibraryPath"
-                                    name="liveLibraryPath"
-                                    value=""
-                                    placeholder="/path/to/live/plex/library or C:\Plex\Music"
-                                    required
-                                    style="flex: 1; min-width: 0;"
-                                >
-                                <button type="button" id="fetchPlexPathBtn" class="button-secondary" style="white-space: nowrap; padding: 8px 12px; font-size: 13px; flex-shrink: 0;">
-                                    📡 Get
-                                </button>
-                            </div>
+                            <input
+                                type="text"
+                                id="liveLibraryPath"
+                                name="liveLibraryPath"
+                                value=""
+                                placeholder="/path/to/live/plex/library or C:\Plex\Music"
+                                required
+                                style="width: 100%; margin-bottom: 8px;"
+                            >
+                            <button type="button" id="fetchPlexPathBtn" class="button-secondary" style="white-space: nowrap; padding: 8px 16px; font-size: 13px; margin-bottom: 5px;">
+                                📡 Get from Plex
+                            </button>
                             <small style="color: #666; font-size: 12px; display: block;">
-                                💡 Tip: Click "Get" to fetch from Plex, or manually enter the path
+                                💡 Tip: Click "Get from Plex" to auto-fill, or manually enter the path
                             </small>
                             <div id="pathValidationStatus" class="connection-status" style="display: none; margin-top: 10px;"></div>
                         </div>

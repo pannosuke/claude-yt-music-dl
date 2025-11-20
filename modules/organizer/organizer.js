@@ -271,10 +271,18 @@ async function cleanupEmptyDirectory(dirPath, basePath) {
 
         const entries = await fs.readdir(dirPath);
 
-        // If directory is empty, remove it
-        if (entries.length === 0) {
+        // Filter out macOS and hidden files that don't count as "content"
+        const meaningfulEntries = entries.filter(entry =>
+            !entry.startsWith('.') && // Exclude .DS_Store, ._, etc.
+            entry !== 'Thumbs.db' &&   // Exclude Windows thumbnail cache
+            entry !== 'desktop.ini'    // Exclude Windows desktop config
+        );
+
+        // If directory is empty (ignoring system files), remove it
+        if (meaningfulEntries.length === 0) {
             console.log(`[Organizer] Removing empty directory: ${dirPath}`);
-            await fs.rmdir(dirPath);
+            // Use recursive: true to handle directories with .DS_Store
+            await fs.rm(dirPath, { recursive: true, force: true });
 
             // Recursively check parent directory
             const parentDir = path.dirname(dirPath);
