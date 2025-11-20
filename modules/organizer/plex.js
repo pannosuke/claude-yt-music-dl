@@ -412,6 +412,48 @@ function isFuzzyDuplicate(offlineTrack, plexTrack, threshold = 0.85) {
 }
 
 /**
+ * Get library details including filesystem paths
+ */
+export async function getLibraryDetails(serverIp, port, token, libraryId) {
+    try {
+        const normalizedIp = normalizeServerIp(serverIp);
+        // Use /library/sections (plural) to get all libraries with Location data
+        const response = await plexRequest(normalizedIp, port, `/library/sections`, token);
+
+        if (response.MediaContainer && response.MediaContainer.Directory && response.MediaContainer.Directory.length > 0) {
+            // Find the library by ID
+            const library = response.MediaContainer.Directory.find(dir => dir.key === libraryId.toString());
+
+            if (!library) {
+                throw new Error(`Library with ID ${libraryId} not found`);
+            }
+
+            // Extract filesystem paths from Location array
+            const paths = [];
+            if (library.Location && Array.isArray(library.Location)) {
+                for (const location of library.Location) {
+                    if (location.path) {
+                        paths.push(location.path);
+                    }
+                }
+            }
+
+            return {
+                id: library.key,
+                name: library.title,
+                type: library.type,
+                paths: paths,
+                primaryPath: paths.length > 0 ? paths[0] : null
+            };
+        }
+
+        throw new Error('No libraries found');
+    } catch (error) {
+        throw new Error(`Failed to fetch library details: ${error.message}`);
+    }
+}
+
+/**
  * Compare offline scanned files with Plex library
  */
 export function compareWithPlex(offlineTracks, plexTracks, progressCallback = () => {}) {

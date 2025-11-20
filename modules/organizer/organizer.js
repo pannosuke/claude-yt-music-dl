@@ -115,7 +115,23 @@ export async function moveOrCopyFile(sourcePath, destinationPath, mode = 'copy',
 
     // Actually perform the operation
     if (mode === 'move') {
-        await fs.rename(sourcePath, finalDestPath);
+        try {
+            // Try rename first (fastest for same filesystem)
+            await fs.rename(sourcePath, finalDestPath);
+        } catch (error) {
+            // If cross-device error, fall back to copy + delete
+            if (error.code === 'EXDEV') {
+                console.log(`[Organizer] Cross-device move detected for ${sourcePath}, using copy+delete`);
+                await fs.copyFile(sourcePath, finalDestPath);
+                // Preserve timestamps
+                const stats = await fs.stat(sourcePath);
+                await fs.utimes(finalDestPath, stats.atime, stats.mtime);
+                // Delete source file after successful copy
+                await fs.unlink(sourcePath);
+            } else {
+                throw error;
+            }
+        }
     } else {
         await fs.copyFile(sourcePath, finalDestPath);
         // Preserve timestamps
@@ -178,23 +194,31 @@ export function planMoveOperations(files, liveLibraryPath, plexTracks = null, mo
 
     for (const file of files) {
         try {
-            // Build destination path
-            const relativePath = path.relative(file.basePath || '', file.path);
-            const destinationPath = path.join(liveLibraryPath, relativePath);
+            // Handle both scanned file structure and renamed file structure
+            const sourcePath = file.filePath || file.path;
+            const fileRelativePath = file.relativePath || path.relative(file.basePath || '', sourcePath);
+
+            // Build destination path using relative path
+            const destinationPath = path.join(liveLibraryPath, fileRelativePath);
+
+            // Extract metadata (handle both flat and nested structures)
+            const fileArtist = file.artist || file.metadata?.artist || file.folderArtist || 'Unknown';
+            const fileAlbum = file.album || file.metadata?.album || file.folderAlbum || 'Unknown';
+            const fileTitle = file.title || file.metadata?.title || file.fileName;
 
             // Check if file exists in Plex library
             let plexMatch = null;
             if (plexTracks && Array.isArray(plexTracks)) {
                 // Find matching track in Plex by artist/album/title
                 plexMatch = plexTracks.find(track =>
-                    normalizeString(track.artist) === normalizeString(file.artist) &&
-                    normalizeString(track.album) === normalizeString(file.album) &&
-                    normalizeString(track.title) === normalizeString(file.title)
+                    normalizeString(track.artist) === normalizeString(fileArtist) &&
+                    normalizeString(track.album) === normalizeString(fileAlbum) &&
+                    normalizeString(track.title) === normalizeString(fileTitle)
                 );
             }
 
             const operation = {
-                sourcePath: file.path,
+                sourcePath,
                 destinationPath,
                 file,
                 plexMatch,
@@ -222,7 +246,7 @@ export function planMoveOperations(files, liveLibraryPath, plexTracks = null, mo
             }
         } catch (error) {
             plan.skipped.push({
-                sourcePath: file.path,
+                sourcePath: file.filePath || file.path,
                 error: error.message,
                 file
             });
@@ -234,15 +258,46 @@ export function planMoveOperations(files, liveLibraryPath, plexTracks = null, mo
 }
 
 /**
+ * Clean up empty directories recursively up to a base path
+ * @param {String} dirPath - Directory to check and potentially remove
+ * @param {String} basePath - Don't remove directories above this level
+ */
+async function cleanupEmptyDirectory(dirPath, basePath) {
+    try {
+        // Don't clean up the base path itself or paths above it
+        if (!dirPath.startsWith(basePath) || dirPath === basePath) {
+            return;
+        }
+
+        const entries = await fs.readdir(dirPath);
+
+        // If directory is empty, remove it
+        if (entries.length === 0) {
+            console.log(`[Organizer] Removing empty directory: ${dirPath}`);
+            await fs.rmdir(dirPath);
+
+            // Recursively check parent directory
+            const parentDir = path.dirname(dirPath);
+            await cleanupEmptyDirectory(parentDir, basePath);
+        }
+    } catch (error) {
+        // Ignore errors (directory might not be empty or might not exist)
+        console.log(`[Organizer] Could not clean up directory ${dirPath}: ${error.message}`);
+    }
+}
+
+/**
  * Execute move operations with progress tracking
  * @param {Array} operations - Operations from planMoveOperations()
  * @param {Boolean} dryRun - If true, don't actually move files
+ * @param {Boolean} cleanupEmptyDirs - If true, remove empty source directories after moving
  * @param {Function} progressCallback - Callback for progress updates
  * @returns {Array} Results of each operation
  */
-export async function executeMoveOperations(operations, dryRun = true, progressCallback = null) {
+export async function executeMoveOperations(operations, dryRun = true, cleanupEmptyDirs = true, progressCallback = null) {
     const results = [];
     const operationHistory = [];
+    const sourceDirsToCleanup = new Set();
     let processedCount = 0;
 
     for (const operation of operations) {
@@ -294,6 +349,15 @@ export async function executeMoveOperations(operations, dryRun = true, progressC
                     destinationPath: result.destinationPath,
                     timestamp: Date.now()
                 });
+
+                // Track source directory for cleanup (only for move operations)
+                if (cleanupEmptyDirs && mode === 'move') {
+                    const sourceDir = path.dirname(sourcePath);
+                    const destDir = path.dirname(destinationPath);
+                    if (sourceDir !== destDir) {
+                        sourceDirsToCleanup.add(sourceDir);
+                    }
+                }
             }
 
             results.push({
@@ -340,6 +404,22 @@ export async function executeMoveOperations(operations, dryRun = true, progressC
     // Save operation history for rollback
     if (!dryRun && operationHistory.length > 0) {
         lastOperationHistory = operationHistory;
+    }
+
+    // Clean up empty directories if requested and not in dry-run mode
+    if (cleanupEmptyDirs && !dryRun && sourceDirsToCleanup.size > 0) {
+        console.log(`[Organizer] Cleaning up ${sourceDirsToCleanup.size} potential empty directories...`);
+
+        // Find a common base path (use the first item's directory as reference)
+        const firstDir = Array.from(sourceDirsToCleanup)[0];
+        const basePath = path.dirname(path.dirname(firstDir)); // Go up two levels to get to the music root
+
+        // Clean up each source directory
+        for (const dirPath of sourceDirsToCleanup) {
+            await cleanupEmptyDirectory(dirPath, basePath);
+        }
+
+        console.log(`[Organizer] Directory cleanup complete`);
     }
 
     return results;

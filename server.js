@@ -8,8 +8,8 @@ import { fileURLToPath } from 'url';
 import { createWriteStream } from 'fs';
 import { scanDirectory, scanLibraryStructure, groupByArtist, generateScanSummary } from './modules/organizer/scanner.js';
 import { testConnection, getLibraries, fetchLibraryTracks, compareWithPlex } from './modules/organizer/plex.js';
-import { searchArtist, searchRelease, searchRecording, getReleaseDetails, getCacheStats } from './modules/organizer/musicbrainz.js';
-import { batchMatchFiles, generateRenamePreviews, executeRename, getMatchStatistics } from './modules/organizer/matcher.js';
+import { searchArtist, searchRelease, searchRecording, getReleaseDetails, getCacheStats, clearCache } from './modules/organizer/musicbrainz.js';
+import { batchMatchFiles, generateRenamePreviews, executeRename, getMatchStatistics, matchArtists, matchAlbums } from './modules/organizer/matcher.js';
 import { validatePath, isPathWritable, planMoveOperations, executeMoveOperations, rollbackLastOperation, triggerPlexRefresh } from './modules/organizer/organizer.js';
 
 const __filename = fileURLToPath(import.meta.url);
@@ -135,7 +135,8 @@ app.post('/api/download', upload.single('cookies'), async (req, res) => {
       '--audio-quality', '0',  // Best quality (0-9, 0 is best)
       '--output', path.join(outputPath, '%(artist)s/%(album)s/%(title)s.%(ext)s'),
       '--add-metadata',  // Add metadata from video
-      '--embed-thumbnail',  // Embed thumbnail as artwork
+      '--embed-thumbnail',  // Embed thumbnail as cover art
+      '--convert-thumbnails', 'jpg',  // Convert WebP to JPG (FLAC-compatible)
       '--yes-playlist',  // Explicitly download whole playlist
       '--ignore-errors',  // Continue on download errors
       '--no-warnings',  // Reduce output noise
@@ -355,6 +356,35 @@ app.post('/api/download', upload.single('cookies'), async (req, res) => {
 
       if (code === 0) {
         log(`Download completed successfully. Total tracks: ${completedTracks}`, 'INFO');
+
+        // Cleanup: Remove leftover JPG thumbnails and empty NA folders
+        try {
+          const fg = (await import('fast-glob')).default;
+
+          // Find and remove JPG files next to FLAC files
+          const jpgFiles = await fg('**/*.jpg', { cwd: outputPath, absolute: true });
+          for (const jpgFile of jpgFiles) {
+            const flacFile = jpgFile.replace(/\.jpg$/, '.flac');
+            if (await fs.access(flacFile).then(() => true).catch(() => false)) {
+              await fs.unlink(jpgFile);
+              log(`Cleaned up thumbnail: ${path.basename(jpgFile)}`, 'DEBUG');
+            }
+          }
+
+          // Remove NA folder if it exists and is empty
+          const naFolder = path.join(outputPath, 'NA');
+          if (await fs.access(naFolder).then(() => true).catch(() => false)) {
+            try {
+              await fs.rmdir(naFolder, { recursive: true });
+              log('Cleaned up NA folder', 'DEBUG');
+            } catch (err) {
+              log(`Could not remove NA folder: ${err.message}`, 'DEBUG');
+            }
+          }
+        } catch (cleanupError) {
+          log(`Cleanup error: ${cleanupError.message}`, 'WARN');
+        }
+
         sendProgress({
           status: 'Download completed successfully!',
           progress: 100,
@@ -572,10 +602,23 @@ app.post('/api/scan', async (req, res) => {
         artistCount: group.artistCount,
         fileCount: group.fileCount,
         artists: Array.from(group.artists),
-        // Include minimal file data for display
+        // Include file data needed for batch match and display
         files: group.files.map(f => ({
+          filePath: f.filePath,
+          relativePath: f.relativePath,
           fileName: f.fileName,
           folderArtist: f.folderArtist,
+          folderAlbum: f.folderAlbum,
+          // Flatten metadata for batch match compatibility
+          artist: f.metadata?.artist || '',
+          albumArtist: f.metadata?.albumArtist || '',
+          album: f.metadata?.album || '',
+          title: f.metadata?.title || '',
+          format: f.metadata?.format || '',
+          codec: f.metadata?.codec || '',
+          bitrate: f.metadata?.bitrate || 0,
+          trackNumber: f.metadata?.trackNumber || 0,
+          year: f.metadata?.year || 0,
           metadata: {
             artist: f.metadata?.artist || '',
             albumArtist: f.metadata?.albumArtist || '',
@@ -850,6 +893,31 @@ app.post('/api/musicbrainz/search-recording', async (req, res) => {
   }
 });
 
+// GET endpoint for manual search (Phase 3.75)
+app.get('/api/musicbrainz/recording', async (req, res) => {
+  const { artist, album, title } = req.query;
+
+  log('=== MUSICBRAINZ RECORDING SEARCH (GET) ===', 'INFO');
+  log(`Artist: ${artist}, Album: ${album || 'N/A'}, Title: ${title}`, 'DEBUG');
+
+  if (!artist || !title) {
+    log('Missing required parameters', 'ERROR');
+    return res.status(400).json({ error: 'Artist and title are required' });
+  }
+
+  try {
+    const results = await searchRecording(artist, album || '', title);
+    log(`Found ${results.length} recording matches`, 'INFO');
+    res.json({ success: true, results });
+  } catch (error) {
+    log(`MusicBrainz recording search error: ${error.message}`, 'ERROR');
+    res.status(500).json({
+      success: false,
+      error: error.message
+    });
+  }
+});
+
 app.post('/api/musicbrainz/release-details', async (req, res) => {
   const { releaseId } = req.body;
 
@@ -889,6 +957,29 @@ app.get('/api/musicbrainz/cache-stats', async (req, res) => {
   }
 });
 
+app.post('/api/musicbrainz/clear-cache', async (req, res) => {
+  log('=== MUSICBRAINZ CLEAR CACHE REQUEST ===', 'INFO');
+
+  try {
+    const result = clearCache();
+
+    if (result.success) {
+      log(`Successfully cleared ${result.cleared} cache entries`, 'INFO');
+      res.json(result);
+    } else {
+      log(`Failed to clear cache: ${result.message}`, 'ERROR');
+      res.status(500).json(result);
+    }
+  } catch (error) {
+    log(`Cache clear error: ${error.message}`, 'ERROR');
+    res.status(500).json({
+      success: false,
+      error: error.message,
+      message: `Failed to clear cache: ${error.message}`
+    });
+  }
+});
+
 // ========================================
 // MATCHER ENDPOINTS (Phase 3.5)
 // ========================================
@@ -910,6 +1001,14 @@ app.post('/api/matcher/batch-match', async (req, res) => {
   }
 
   log(`Batch matching ${files.length} files to MusicBrainz`, 'INFO');
+
+  // DEBUG: Log first file to see what fields are present
+  if (files.length > 0) {
+    log(`DEBUG: First file keys: ${Object.keys(files[0]).join(', ')}`, 'INFO');
+    log(`DEBUG: First file filePath: ${files[0].filePath}`, 'INFO');
+    log(`DEBUG: First file path: ${files[0].path}`, 'INFO');
+    log(`DEBUG: First file structure: ${JSON.stringify(files[0], null, 2)}`, 'INFO');
+  }
 
   // Set up SSE
   res.setHeader('Content-Type', 'text/event-stream');
@@ -950,6 +1049,143 @@ app.post('/api/matcher/batch-match', async (req, res) => {
 });
 
 /**
+ * ========================================
+ * THREE-PHASE MUSICBRAINZ MATCHING ENDPOINTS
+ * ========================================
+ */
+
+/**
+ * POST /api/matcher/match-artists
+ * Phase 1: Match unique artists to MusicBrainz with SSE progress
+ */
+app.post('/api/matcher/match-artists', async (req, res) => {
+  log('=== PHASE 1: MATCH ARTISTS REQUEST ===', 'INFO');
+
+  const { files } = req.body;
+
+  if (!files || !Array.isArray(files) || files.length === 0) {
+    return res.status(400).json({
+      success: false,
+      error: 'Missing or invalid files array'
+    });
+  }
+
+  log(`Phase 1: Matching artists from ${files.length} files`, 'INFO');
+
+  // Set up SSE
+  res.setHeader('Content-Type', 'text/event-stream');
+  res.setHeader('Cache-Control', 'no-cache');
+  res.setHeader('Connection', 'keep-alive');
+
+  try {
+    const artistResults = await matchArtists(files, (progress) => {
+      // Send progress updates via SSE
+      res.write(`data: ${JSON.stringify({
+        type: 'progress',
+        ...progress
+      })}\n\n`);
+    });
+
+    // Calculate statistics
+    const stats = {
+      total: artistResults.length,
+      autoApprove: artistResults.filter(r => r.category === 'auto_approve').length,
+      review: artistResults.filter(r => r.category === 'review').length,
+      manual: artistResults.filter(r => r.category === 'manual').length,
+      errors: artistResults.filter(r => r.status === 'error').length
+    };
+
+    // Send completion message
+    res.write(`data: ${JSON.stringify({
+      type: 'complete',
+      results: artistResults,
+      stats: stats,
+      message: `Phase 1 complete! Matched ${stats.autoApprove + stats.review}/${stats.total} artists`
+    })}\n\n`);
+
+    res.end();
+    log(`Phase 1 complete: ${stats.autoApprove + stats.review}/${stats.total} artists matched`, 'INFO');
+
+  } catch (error) {
+    log(`Phase 1 error: ${error.message}`, 'ERROR');
+    res.write(`data: ${JSON.stringify({
+      type: 'error',
+      error: error.message
+    })}\n\n`);
+    res.end();
+  }
+});
+
+/**
+ * POST /api/matcher/match-albums
+ * Phase 2: Match albums using corrected artist names with SSE progress
+ */
+app.post('/api/matcher/match-albums', async (req, res) => {
+  log('=== PHASE 2: MATCH ALBUMS REQUEST ===', 'INFO');
+
+  const { files, artistMatches } = req.body;
+
+  if (!files || !Array.isArray(files) || files.length === 0) {
+    return res.status(400).json({
+      success: false,
+      error: 'Missing or invalid files array'
+    });
+  }
+
+  if (!artistMatches || !Array.isArray(artistMatches)) {
+    return res.status(400).json({
+      success: false,
+      error: 'Missing artistMatches from Phase 1'
+    });
+  }
+
+  log(`Phase 2: Matching albums from ${files.length} files using ${artistMatches.length} artist matches`, 'INFO');
+
+  // Set up SSE
+  res.setHeader('Content-Type', 'text/event-stream');
+  res.setHeader('Cache-Control', 'no-cache');
+  res.setHeader('Connection', 'keep-alive');
+
+  try {
+    const albumResults = await matchAlbums(files, artistMatches, (progress) => {
+      // Send progress updates via SSE
+      res.write(`data: ${JSON.stringify({
+        type: 'progress',
+        ...progress
+      })}\n\n`);
+    });
+
+    // Calculate statistics
+    const stats = {
+      total: albumResults.length,
+      autoApprove: albumResults.filter(r => r.category === 'auto_approve').length,
+      review: albumResults.filter(r => r.category === 'review').length,
+      manual: albumResults.filter(r => r.category === 'manual').length,
+      errors: albumResults.filter(r => r.status === 'error').length
+    };
+
+    // Send completion message
+    res.write(`data: ${JSON.stringify({
+      type: 'complete',
+      results: albumResults,
+      stats: stats,
+      message: `Phase 2 complete! Matched ${stats.autoApprove + stats.review}/${stats.total} albums`
+    })}\n\n`);
+
+    res.end();
+    log(`Phase 2 complete: ${stats.autoApprove + stats.review}/${stats.total} albums matched`, 'INFO');
+
+  } catch (error) {
+    log(`Phase 2 error: ${error.message}`, 'ERROR');
+    res.write(`data: ${JSON.stringify({
+      type: 'error',
+      error: error.message
+    })}\n\n`);
+    res.end();
+  }
+});
+
+/**
  * POST /api/matcher/preview-rename
  * Generate rename previews for matched files
  */
@@ -974,6 +1210,13 @@ app.post('/api/matcher/preview-rename', async (req, res) => {
 
   try {
     log(`Generating rename previews for ${matchResults.length} files (basePath: ${basePath})`, 'INFO');
+
+    // Debug: Log first match result to see structure
+    if (matchResults.length > 0) {
+      log(`DEBUG: First match result keys: ${Object.keys(matchResults[0]).join(', ')}`, 'INFO');
+      log(`DEBUG: First match result structure: ${JSON.stringify(matchResults[0], null, 2)}`, 'INFO');
+    }
+
     const previews = generateRenamePreviews(matchResults, basePath);
 
     log(`Rename previews generated: ${previews.summary.autoApprove} auto-approve, ${previews.summary.review} review, ${previews.summary.manual} manual`, 'INFO');
@@ -999,7 +1242,7 @@ app.post('/api/matcher/preview-rename', async (req, res) => {
 app.post('/api/matcher/execute-rename', async (req, res) => {
   log('=== EXECUTE RENAME REQUEST ===', 'INFO');
 
-  const { renameItems, dryRun = true } = req.body;
+  const { renameItems, dryRun = true, cleanupEmptyDirs = true } = req.body;
 
   if (!renameItems || !Array.isArray(renameItems)) {
     return res.status(400).json({
@@ -1008,7 +1251,7 @@ app.post('/api/matcher/execute-rename', async (req, res) => {
     });
   }
 
-  log(`Executing rename for ${renameItems.length} files (dryRun: ${dryRun})`, 'INFO');
+  log(`Executing rename for ${renameItems.length} files (dryRun: ${dryRun}, cleanupEmptyDirs: ${cleanupEmptyDirs})`, 'INFO');
 
   // Set up SSE
   res.setHeader('Content-Type', 'text/event-stream');
@@ -1016,7 +1259,7 @@ app.post('/api/matcher/execute-rename', async (req, res) => {
   res.setHeader('Connection', 'keep-alive');
 
   try {
-    const results = await executeRename(renameItems, dryRun, (progress) => {
+    const results = await executeRename(renameItems, dryRun, cleanupEmptyDirs, (progress) => {
       // Send progress updates via SSE
       res.write(`data: ${JSON.stringify({
         type: 'progress',
@@ -1060,6 +1303,224 @@ app.post('/api/matcher/execute-rename', async (req, res) => {
 // ========================================
 // ORGANIZER ENDPOINTS (Phase 4)
 // ========================================
+
+/**
+ * POST /api/organizer/rename-artists
+ * Rename artist folders based on Phase 1 matching results
+ */
+app.post('/api/organizer/rename-artists', async (req, res) => {
+  log('=== RENAME ARTISTS REQUEST ===', 'INFO');
+
+  const { musicPath, renames } = req.body;
+
+  if (!musicPath || !renames || !Array.isArray(renames)) {
+    return res.status(400).json({
+      success: false,
+      error: 'Missing musicPath or renames array'
+    });
+  }
+
+  try {
+    const fs = await import('fs/promises');
+    const path = await import('path');
+    const { updateArtistMetadata } = await import('./modules/organizer/metadata-updater.js');
+
+    let renamedCount = 0;
+    let metadataUpdatedCount = 0;
+    const errors = [];
+
+    for (const rename of renames) {
+      // CRITICAL: Use folderName (actual folder on disk), not originalArtist (metadata name)
+      const folderToRename = rename.folderName || rename.originalArtist;
+      const oldPath = path.join(musicPath, folderToRename);
+      const newPath = path.join(musicPath, rename.newArtist);
+
+      log(`Attempting rename: "${folderToRename}" → "${rename.newArtist}"`, 'DEBUG');
+
+      try {
+        // Check if old path exists
+        await fs.access(oldPath);
+
+        let folderRenamed = false;
+        let targetPath = oldPath;
+
+        // Check if rename is needed (folder name different from new artist name)
+        if (folderToRename !== rename.newArtist) {
+          // Check if new path already exists
+          try {
+            await fs.access(newPath);
+            log(`Target folder already exists: ${newPath}`, 'WARN');
+            errors.push(`${rename.newArtist} folder already exists`);
+            continue;
+          } catch {
+            // New path doesn't exist - good!
+          }
+
+          // Perform rename
+          await fs.rename(oldPath, newPath);
+          log(`Renamed folder: ${oldPath} → ${newPath}`, 'INFO');
+          renamedCount++;
+          folderRenamed = true;
+          targetPath = newPath;
+        } else {
+          // Folder name is already correct, but metadata may still need updating
+          log(`Folder name already correct: ${folderToRename}`, 'DEBUG');
+          targetPath = oldPath; // Use existing path for metadata update
+        }
+
+        // Update metadata in all files within the folder (even if folder wasn't renamed)
+        try {
+          const updated = await updateArtistMetadata(targetPath, rename.newArtist);
+          metadataUpdatedCount += updated;
+          log(`Updated metadata in ${updated} files`, 'INFO');
+        } catch (metaError) {
+          log(`Failed to update metadata: ${metaError.message}`, 'WARN');
+          errors.push(`${rename.newArtist}: metadata update failed - ${metaError.message}`);
+        }
+      } catch (error) {
+        log(`Rename error for ${folderToRename}: ${error.message}`, 'ERROR');
+        errors.push(`${folderToRename}: ${error.message}`);
+      }
+    }
+
+    res.json({
+      success: true,
+      renamedCount,
+      metadataUpdatedCount,
+      errors: errors.length > 0 ? errors : undefined,
+      message: `Renamed ${renamedCount} artist folder(s), updated metadata in ${metadataUpdatedCount} files`
+    });
+  } catch (error) {
+    log(`Artist rename error: ${error.message}`, 'ERROR');
+    res.status(500).json({
+      success: false,
+      error: error.message
+    });
+  }
+});
+
+/**
+ * POST /api/organizer/rename-albums
+ * Rename album folders based on Phase 2 matching results
+ */
+app.post('/api/organizer/rename-albums', async (req, res) => {
+  log('=== RENAME ALBUMS REQUEST ===', 'INFO');
+
+  const { musicPath, renames } = req.body;
+
+  if (!musicPath || !renames || !Array.isArray(renames)) {
+    return res.status(400).json({
+      success: false,
+      error: 'Missing musicPath or renames array'
+    });
+  }
+
+  try {
+    const fs = await import('fs/promises');
+    const path = await import('path');
+    const { updateAlbumMetadata, updateArtistMetadata } = await import('./modules/organizer/metadata-updater.js');
+
+    let renamedCount = 0;
+    let metadataUpdatedCount = 0;
+    const errors = [];
+
+    for (const rename of renames) {
+      // Use actual folder names for the rename operation
+      const artistFolder = rename.folderArtist || rename.originalArtist;
+      const albumFolder = rename.folderAlbum || rename.originalAlbum;
+      const oldPath = path.join(musicPath, artistFolder, albumFolder);
+      const newArtistFolder = rename.newArtist;
+      const newAlbumFolder = rename.newAlbum;
+      const newPath = path.join(musicPath, newArtistFolder, newAlbumFolder);
+
+      log(`Attempting album rename: "${artistFolder}/${albumFolder}" → "${newArtistFolder}/${newAlbumFolder}"`, 'DEBUG');
+
+      try {
+        // Check if old path exists
+        await fs.access(oldPath);
+
+        // Ensure new artist folder exists
+        const newArtistPath = path.join(musicPath, newArtistFolder);
+        try {
+          await fs.access(newArtistPath);
+        } catch {
+          // Create new artist folder if it doesn't exist
+          await fs.mkdir(newArtistPath, { recursive: true });
+          log(`Created artist folder: ${newArtistPath}`, 'INFO');
+        }
+
+        // Check if rename is needed (old path !== new path)
+        const needsRename = oldPath !== newPath;
+        let targetPath = newPath;
+
+        if (needsRename) {
+          // Check if new album path already exists
+          try {
+            await fs.access(newPath);
+            log(`Target album folder already exists: ${newPath}`, 'WARN');
+            errors.push(`${newArtistFolder}/${newAlbumFolder} folder already exists`);
+            continue;
+          } catch {
+            // New path doesn't exist - good!
+          }
+
+          // Perform rename
+          await fs.rename(oldPath, newPath);
+          log(`Renamed album folder: ${oldPath} → ${newPath}`, 'INFO');
+          renamedCount++;
+        } else {
+          // No rename needed - folder already has correct name
+          log(`Album folder already correct: ${newPath}`, 'INFO');
+          targetPath = oldPath; // Use existing path for metadata update
+        }
+
+        // Update metadata in all files (whether renamed or not)
+        try {
+          // Update both artist and album metadata for all tracks
+          const artistUpdated = await updateArtistMetadata(targetPath, rename.newArtist);
+          const albumUpdated = await updateAlbumMetadata(targetPath, rename.newAlbum);
+
+          metadataUpdatedCount += Math.max(artistUpdated, albumUpdated); // Avoid double-counting same files
+          log(`Updated metadata in ${Math.max(artistUpdated, albumUpdated)} files (artist + album tags)`, 'INFO');
+        } catch (metaError) {
+          log(`Failed to update metadata: ${metaError.message}`, 'WARN');
+          errors.push(`${newArtistFolder}/${newAlbumFolder}: metadata update failed - ${metaError.message}`);
+        }
+
+        // If artist also changed, try to clean up old artist folder if empty
+        if (artistFolder !== newArtistFolder) {
+          try {
+            const oldArtistPath = path.join(musicPath, artistFolder);
+            const remainingContents = await fs.readdir(oldArtistPath);
+            if (remainingContents.length === 0) {
+              await fs.rmdir(oldArtistPath);
+              log(`Removed empty artist folder: ${oldArtistPath}`, 'INFO');
+            }
+          } catch (cleanupError) {
+            log(`Could not clean up old artist folder: ${cleanupError.message}`, 'DEBUG');
+          }
+        }
+      } catch (error) {
+        log(`Rename error for ${artistFolder}/${albumFolder}: ${error.message}`, 'ERROR');
+        errors.push(`${artistFolder}/${albumFolder}: ${error.message}`);
+      }
+    }
+
+    res.json({
+      success: true,
+      renamedCount,
+      metadataUpdatedCount,
+      errors: errors.length > 0 ? errors : undefined,
+      message: `Renamed ${renamedCount} album folder(s), updated metadata in ${metadataUpdatedCount} files`
+    });
+  } catch (error) {
+    log(`Album rename error: ${error.message}`, 'ERROR');
+    res.status(500).json({
+      success: false,
+      error: error.message
+    });
+  }
+});
 
 /**
  * POST /api/organizer/validate-path
@@ -1160,7 +1621,7 @@ app.post('/api/organizer/plan-move', async (req, res) => {
 app.post('/api/organizer/execute-move', async (req, res) => {
   log('=== EXECUTE MOVE REQUEST ===', 'INFO');
 
-  const { operations, dryRun = true } = req.body;
+  const { operations, dryRun = true, cleanupEmptyDirs = true } = req.body;
 
   if (!operations || !Array.isArray(operations)) {
     return res.status(400).json({
@@ -1169,7 +1630,7 @@ app.post('/api/organizer/execute-move', async (req, res) => {
     });
   }
 
-  log(`Executing move for ${operations.length} operations (dryRun: ${dryRun})`, 'INFO');
+  log(`Executing move for ${operations.length} operations (dryRun: ${dryRun}, cleanupEmptyDirs: ${cleanupEmptyDirs})`, 'INFO');
 
   // Set up SSE
   res.setHeader('Content-Type', 'text/event-stream');
@@ -1177,7 +1638,7 @@ app.post('/api/organizer/execute-move', async (req, res) => {
   res.setHeader('Connection', 'keep-alive');
 
   try {
-    const results = await executeMoveOperations(operations, dryRun, (progress) => {
+    const results = await executeMoveOperations(operations, dryRun, cleanupEmptyDirs, (progress) => {
       // Send progress updates via SSE
       res.write(`data: ${JSON.stringify({
         type: 'progress',
@@ -1246,6 +1707,42 @@ app.post('/api/organizer/rollback', async (req, res) => {
 
   } catch (error) {
     log(`Rollback error: ${error.message}`, 'ERROR');
+    res.status(500).json({
+      success: false,
+      error: error.message
+    });
+  }
+});
+
+/**
+ * POST /api/organizer/plex-library-path
+ * Get filesystem path for a Plex library
+ */
+app.post('/api/organizer/plex-library-path', async (req, res) => {
+  log('=== PLEX LIBRARY PATH REQUEST ===', 'INFO');
+
+  const { serverIp, port, token, libraryId } = req.body;
+
+  if (!serverIp || !port || !token || !libraryId) {
+    return res.status(400).json({
+      success: false,
+      error: 'Server IP, port, token, and library ID are required'
+    });
+  }
+
+  try {
+    const { getLibraryDetails } = await import('./modules/organizer/plex.js');
+    const libraryDetails = await getLibraryDetails(serverIp, port, token, libraryId);
+
+    log(`Library path fetched: ${libraryDetails.primaryPath}`, 'INFO');
+
+    res.json({
+      success: true,
+      ...libraryDetails
+    });
+
+  } catch (error) {
+    log(`Plex library path error: ${error.message}`, 'ERROR');
     res.status(500).json({
       success: false,
       error: error.message

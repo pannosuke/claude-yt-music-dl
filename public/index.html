@@ -206,6 +206,7 @@
                 <div class="results-header">
                     <h2>Scan Results</h2>
                     <div class="result-actions">
+                        <button type="button" id="clearCacheBtn" style="background-color: #e74c3c; margin-right: 10px;">Clear Cache & Reset</button>
                         <button type="button" id="newScanBtn">New Scan</button>
                     </div>
                 </div>
@@ -449,15 +450,38 @@
                     <p class="subtitle">Automatically match your scanned files to MusicBrainz and rename them to Plex standards</p>
                 </div>
 
-                <!-- Batch Match Controls -->
+                <!-- Three-Phase Match Controls -->
                 <div class="card">
-                    <h3>Step 1: Batch Match to MusicBrainz</h3>
+                    <h3>Step 1: Three-Phase MusicBrainz Matching</h3>
                     <p style="color: #64748b; font-size: 14px; margin-bottom: 15px;">
-                        Match all scanned files against the MusicBrainz database. High-confidence matches (≥90%) will be auto-approved.
+                        Match files in three phases: Artists → Albums → Tracks. Fix errors at each level before proceeding.
                     </p>
                     <div class="button-group">
-                        <button type="button" id="startBatchMatchBtn" class="button-primary">
-                            Start Batch Match
+                        <!-- Phase 1: Match Artists -->
+                        <button type="button" id="matchArtistsBtn" class="button-primary">
+                            Phase 1: Match Artists
+                        </button>
+                        <!-- Phase 1.5: Rename Artist Folders (appears after Phase 1) -->
+                        <button type="button" id="renameArtistFoldersBtn" class="button-primary" style="display: none;">
+                            📁 Rename Artist Folders
+                        </button>
+                        <!-- Phase 2: Match Albums -->
+                        <button type="button" id="matchAlbumsBtn" class="button-secondary" disabled>
+                            Phase 2: Match Albums
+                        </button>
+                        <!-- Phase 2.5: Rename Album Folders (appears after Phase 2) -->
+                        <button type="button" id="renameAlbumFoldersBtn" class="button-primary" style="display: none;">
+                            📂 Rename Album Folders & Update Metadata
+                        </button>
+                        <button type="button" id="cancelMatchBtn" class="button-danger" style="display: none;">
+                            Cancel
+                        </button>
+                    </div>
+
+                    <!-- Legacy: Keep old batch match button for backwards compatibility (hidden by default) -->
+                    <div style="margin-top: 15px; display: none;" id="legacyMatchContainer">
+                        <button type="button" id="startBatchMatchBtn" class="button-secondary">
+                            Legacy: Single-Phase Match
                         </button>
                         <button type="button" id="cancelBatchMatchBtn" class="button-danger" style="display: none;">
                             Cancel
@@ -499,6 +523,40 @@
                     </div>
                 </div>
 
+                <!-- Artist Folder Rename Preview -->
+                <div id="artistRenamePreviewContainer" class="card" style="display: none; margin-top: 20px;">
+                    <h3>Preview Artist Folder Renames</h3>
+                    <p style="color: #64748b; font-size: 14px; margin-bottom: 15px;">
+                        Review the proposed artist folder renames. Only folders with corrected names will be renamed.
+                    </p>
+                    <div id="artistRenamePreviewList" class="rename-preview-list"></div>
+                    <div class="button-group" style="margin-top: 20px;">
+                        <button type="button" id="executeArtistRenamesBtn" class="button-primary">
+                            ✅ Execute Artist Renames
+                        </button>
+                        <button type="button" id="cancelArtistRenamesBtn" class="button-secondary">
+                            Cancel
+                        </button>
+                    </div>
+                </div>
+
+                <!-- Album Folder Rename Preview -->
+                <div id="albumRenamePreviewContainer" class="card" style="display: none; margin-top: 20px;">
+                    <h3>Preview Album Folder Renames</h3>
+                    <p style="color: #64748b; font-size: 14px; margin-bottom: 15px;">
+                        Review the proposed album folder renames. Only folders with corrected names will be renamed, and metadata will be updated.
+                    </p>
+                    <div id="albumRenamePreviewList" class="rename-preview-list"></div>
+                    <div class="button-group" style="margin-top: 20px;">
+                        <button type="button" id="executeAlbumRenamesBtn" class="button-primary">
+                            ✅ Execute Album Renames
+                        </button>
+                        <button type="button" id="cancelAlbumRenamesBtn" class="button-secondary">
+                            Cancel
+                        </button>
+                    </div>
+                </div>
+
                 <!-- Match Results Review -->
                 <div id="matchResultsContainer" class="card" style="display: none; margin-top: 20px;">
                     <h3>Step 2: Review Match Results</h3>
@@ -511,6 +569,18 @@
                     </div>
 
                     <div id="matchResultsList" class="match-results-list"></div>
+                </div>
+
+                <!-- Step 2: Preview Renames -->
+                <div id="outputDirectoryContainer" class="card" style="display: none; margin-top: 20px;">
+                    <h3>Step 2: Preview Rename Plan</h3>
+                    <p style="color: #64748b; font-size: 14px; margin-bottom: 15px;">
+                        Files will be renamed and reorganized in-place within your scanned directory. The new structure will follow Plex Media Server standards: <code>{Artist}/{Album (Year)}/{Track#} - {Title}.ext</code>
+                    </p>
+
+                    <div class="info-box" style="margin-bottom: 20px;">
+                        <strong>⚠️ Important:</strong> Files will be renamed in-place within your current music directory. Make sure you have a backup if this is your only copy!
+                    </div>
 
                     <div class="button-group" style="margin-top: 20px;">
                         <button type="button" id="previewRenamesBtn" class="button-primary">
@@ -527,6 +597,18 @@
                     </p>
 
                     <div id="renamePreviewList" class="rename-preview-list"></div>
+
+                    <div style="margin-top: 20px; padding: 15px; background: #f8fafc; border-radius: 8px;">
+                        <label style="display: flex; align-items: center; cursor: pointer; font-size: 14px;">
+                            <input type="checkbox" id="cleanupEmptyDirsCheckbox" checked style="margin-right: 10px; cursor: pointer; width: auto;">
+                            <span>
+                                <strong>Clean up empty directories after renaming</strong>
+                                <div style="color: #64748b; font-size: 12px; margin-top: 4px;">
+                                    Automatically remove empty folders left behind after moving files to new locations
+                                </div>
+                            </span>
+                        </label>
+                    </div>
 
                     <div class="button-group" style="margin-top: 20px;">
                         <button type="button" id="executeDryRunBtn" class="button-secondary">
@@ -567,16 +649,22 @@
                     <form id="liveLibraryForm">
                         <div class="form-group">
                             <label for="liveLibraryPath">Live Library Path *</label>
-                            <input
-                                type="text"
-                                id="liveLibraryPath"
-                                name="liveLibraryPath"
-                                value=""
-                                placeholder="/path/to/live/plex/library or C:\Plex\Music"
-                                required
-                            >
-                            <small style="color: #666; font-size: 12px; display: block; margin-top: 5px;">
-                                💡 Tip: You can drag your Plex music folder here, or copy/paste the path
+                            <div style="display: flex; gap: 8px; margin-bottom: 5px; align-items: stretch;">
+                                <input
+                                    type="text"
+                                    id="liveLibraryPath"
+                                    name="liveLibraryPath"
+                                    value=""
+                                    placeholder="/path/to/live/plex/library or C:\Plex\Music"
+                                    required
+                                    style="flex: 1; min-width: 0;"
+                                >
+                                <button type="button" id="fetchPlexPathBtn" class="button-secondary" style="white-space: nowrap; padding: 8px 12px; font-size: 13px; flex-shrink: 0;">
+                                    📡 Get
+                                </button>
+                            </div>
+                            <small style="color: #666; font-size: 12px; display: block;">
+                                💡 Tip: Click "Get" to fetch from Plex, or manually enter the path
                             </small>
                             <div id="pathValidationStatus" class="connection-status" style="display: none; margin-top: 10px;"></div>
                         </div>
@@ -681,6 +769,84 @@
                             New Move Operation
                         </button>
                     </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Manual Search Modal -->
+    <div id="manualSearchModal" class="modal">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h2>🔍 Manual MusicBrainz Search</h2>
+                <button class="modal-close" onclick="document.getElementById('manualSearchModal').style.display='none'">&times;</button>
+            </div>
+            <div class="modal-body">
+                <p class="modal-description">Search MusicBrainz to find the correct match for this track.</p>
+
+                <div class="form-group">
+                    <label for="searchArtist">Artist</label>
+                    <input type="text" id="searchArtist" placeholder="Artist name">
+                </div>
+
+                <div class="form-group">
+                    <label for="searchAlbum">Album <span class="optional">(optional)</span></label>
+                    <input type="text" id="searchAlbum" placeholder="Album name">
+                </div>
+
+                <div class="form-group">
+                    <label for="searchTitle">Title</label>
+                    <input type="text" id="searchTitle" placeholder="Track title">
+                </div>
+
+                <button type="button" id="performSearchBtn" class="button-primary">Search MusicBrainz</button>
+
+                <div id="searchResultsContainer" style="margin-top: 20px; display: none;">
+                    <h3>Search Results</h3>
+                    <div id="searchResultsList" class="search-results-list"></div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Metadata Editor Modal -->
+    <div id="metadataEditorModal" class="modal">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h2>✏️ Edit Metadata</h2>
+                <button class="modal-close" onclick="document.getElementById('metadataEditorModal').style.display='none'">&times;</button>
+            </div>
+            <div class="modal-body">
+                <p class="modal-description">Manually enter the correct metadata for this track.</p>
+
+                <div class="form-group">
+                    <label for="editArtist">Artist</label>
+                    <input type="text" id="editArtist" placeholder="Artist name" required>
+                </div>
+
+                <div class="form-group">
+                    <label for="editAlbum">Album</label>
+                    <input type="text" id="editAlbum" placeholder="Album name" required>
+                </div>
+
+                <div class="form-group">
+                    <label for="editTitle">Title</label>
+                    <input type="text" id="editTitle" placeholder="Track title" required>
+                </div>
+
+                <div class="form-group">
+                    <label for="editYear">Year <span class="optional">(optional)</span></label>
+                    <input type="text" id="editYear" placeholder="Year (e.g., 2024)">
+                </div>
+
+                <div class="form-group">
+                    <label for="editTrack">Track Number <span class="optional">(optional)</span></label>
+                    <input type="text" id="editTrack" placeholder="Track number">
+                </div>
+
+                <div class="button-group">
+                    <button type="button" id="saveMetadataBtn" class="button-primary">Save Changes</button>
+                    <button type="button" class="button-secondary" onclick="document.getElementById('metadataEditorModal').style.display='none'">Cancel</button>
                 </div>
             </div>
         </div>
