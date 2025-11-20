@@ -440,5 +440,37 @@ export function getCacheStats() {
     }
 }
 
+/**
+ * Clear all cache entries and reset database
+ */
+export function clearCache() {
+    if (!db) {
+        console.log('[MusicBrainz] No cache database to clear');
+        return { success: false, message: 'Cache database not initialized' };
+    }
+
+    try {
+        // Delete all records from the cache table
+        const stmt = db.prepare('DELETE FROM mb_cache');
+        const result = stmt.run();
+
+        // Vacuum the database to reclaim space
+        db.exec('VACUUM');
+
+        console.log(`[MusicBrainz] Cleared all ${result.changes} cache entries`);
+        return {
+            success: true,
+            cleared: result.changes,
+            message: `Cleared ${result.changes} cache entries`
+        };
+    } catch (error) {
+        console.error('[MusicBrainz] Cache clear error:', error.message);
+        return {
+            success: false,
+            message: `Failed to clear cache: ${error.message}`
+        };
+    }
+}
+
 // Initialize cache on module load
 initializeCache();

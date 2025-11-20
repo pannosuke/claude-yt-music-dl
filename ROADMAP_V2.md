@@ -666,9 +666,245 @@ YOASOBI/THE BOOK (2021)/03 - 夜に駆ける.flac
 
 ---
 
-### 🔄 Phase 4: Move to Live Plex Library (IN PROGRESS)
+### ✅ Phase 3.75: Manual Review & Override Interface (COMPLETE)
+**Status:** 100% Complete
+**Estimated Time:** 2-3 hours
+**Time Spent:** ~2 hours
+**Completed:** November 18, 2025
+**Priority:** HIGH (Was blocking Phase 4 testing)
+
+---
+
+### 🔄 Phase 3.8: Three-Phase MusicBrainz Matching Strategy (IN PROGRESS)
+**Status:** Backend & Frontend Complete - Testing Required
+**Estimated Time:** 3-4 hours
+**Time Spent:** ~3 hours
+**Started:** November 18, 2025
+**Priority:** HIGH (Better UX for metadata matching)
+
+**Rationale:**
+The original single-phase batch matching had a critical flaw: if an artist name was incorrect, ALL albums and tracks from that artist would also be wrong. This three-phase approach allows fixing errors at each level before they cascade:
+
+1. **Phase 1: Match Artists** - Fix artist names first
+2. **Phase 2: Match Albums** - Albums inherit corrected artist names
+3. **Phase 3: Match Tracks** - Tracks inherit corrected artist AND album names
+
+**Benefits:**
+- Granular control over matching process
+- Fix artist-level errors before they affect 100+ tracks
+- Easier to review and correct matches at each level
+- Prevents cascading errors from incorrect metadata
+- Better user experience with sequential workflow
+
+**Architecture:**
+
+```
+┌─────────────────────────────────────────────────────────┐
+│ Phase 1: Match Artists                                  │
+│ - Extract unique artists from all files                 │
+│ - Match each artist to MusicBrainz                      │
+│ - Show artist matches with file counts                  │
+│ - Accept/Edit/Search/Skip each artist                   │
+│ - Save corrected artist names                           │
+└─────────────────────────────────────────────────────────┘
+                        ↓
+┌─────────────────────────────────────────────────────────┐
+│ Phase 2: Match Albums                                   │
+│ - Group files by album using corrected artist names     │
+│ - Match albums to MusicBrainz releases                  │
+│ - Show album matches with track counts                  │
+│ - Accept/Edit/Search/Skip each album                    │
+│ - Save corrected album names                            │
+└─────────────────────────────────────────────────────────┘
+                        ↓
+┌─────────────────────────────────────────────────────────┐
+│ Phase 3: Match Tracks                                   │
+│ - Match individual tracks using corrected metadata      │
+│ - Show track matches with full metadata                 │
+│ - Accept/Edit/Search/Skip each track                    │
+│ - Ready for rename preview                              │
+└─────────────────────────────────────────────────────────┘
+```
+
+**Implementation:**
+
+**Backend (modules/organizer/matcher.js):**
+- [x] `matchArtists(files, progressCallback)` - Extract unique artists, match to MusicBrainz
+- [x] `matchAlbums(files, artistMatches, progressCallback)` - Match albums using corrected artists
+- [x] `matchTracks(files, artistMatches, albumMatches, progressCallback)` - Match tracks with full context
+- [x] Each function returns results with confidence scores and status
+- [x] Japanese variant support in all three phases
+- [x] Artist/album lookup maps for applying corrections
+
+**Backend (server.js):**
+- [x] `POST /api/matcher/match-artists` - Phase 1 endpoint with SSE
+- [x] `POST /api/matcher/match-albums` - Phase 2 endpoint with SSE
+- [x] `POST /api/matcher/match-tracks` - Phase 3 endpoint with SSE
+- [x] Progress streaming for all three phases
+- [x] Statistics calculation (auto-approve, review, manual counts)
+
+**Frontend (public/index.html):**
+- [x] Three sequential buttons: "Phase 1: Match Artists", "Phase 2: Match Albums", "Phase 3: Match Tracks"
+- [x] Phase 2 and 3 buttons start disabled
+- [x] Buttons unlock progressively as each phase completes
+- [x] Visual styling change from secondary to primary when unlocked
+
+**Frontend (public/js/organizer.js):**
+- [x] State variables: `artistMatchResults`, `albumMatchResults`
+- [x] Event listeners for three phase buttons
+- [x] `handleMatchArtists()` - Execute Phase 1, enable Phase 2 on completion
+- [x] `handleMatchAlbums()` - Execute Phase 2, enable Phase 3 on completion
+- [x] `handleMatchTracks()` - Execute Phase 3, show output directory config
+- [x] `displayArtistMatchResults()` - Show artist matches with file counts
+- [x] `displayAlbumMatchResults()` - Show album matches with track counts
+- [x] Reuse existing `displayMatchResults()` for Phase 3 tracks
+
+**UI Flow:**
+```
+┌─────────────────────────────────────────────────────────┐
+│ [Phase 1: Match Artists] (enabled)                      │
+│ [Phase 2: Match Albums] (disabled - locked)             │
+│ [Phase 3: Match Tracks] (disabled - locked)             │
+└─────────────────────────────────────────────────────────┘
+                ↓ Click Phase 1
+┌─────────────────────────────────────────────────────────┐
+│ Artist Match Results:                                   │
+│ ✓ AUTO-APPROVE: XG (90% - 4 files)                     │
+│ ⚠️ REVIEW: BABYMETAL (85% - 12 files) [Accept][Search] │
+│ ❌ MANUAL: Unknown Artist (0% - 3 files) [Search][Edit]│
+└─────────────────────────────────────────────────────────┘
+                ↓ Review and fix artist matches
+┌─────────────────────────────────────────────────────────┐
+│ [Phase 1: Match Artists] (completed ✓)                  │
+│ [Phase 2: Match Albums] (enabled - unlocked!)           │
+│ [Phase 3: Match Tracks] (disabled - locked)             │
+└─────────────────────────────────────────────────────────┘
+                ↓ Click Phase 2
+                ... (repeat for albums and tracks)
+```
+
+**Tasks:**
+
+**Testing:**
+- [ ] Test Phase 1 with small dataset (4-10 artists)
+- [ ] Verify artist matches display correctly
+- [ ] Test Accept/Edit/Search/Skip functionality on artist results
+- [ ] Confirm Phase 2 button unlocks after Phase 1 completes
+- [ ] Test Phase 2 with corrected artist names from Phase 1
+- [ ] Verify album matches inherit corrected artist names
+- [ ] Confirm Phase 3 button unlocks after Phase 2 completes
+- [ ] Test Phase 3 with corrected artist AND album names
+- [ ] Verify final track matches use all corrections
+- [ ] Test full workflow: Phase 1 → 2 → 3 → Rename Preview → Execute
+
+**Deliverables:**
+- ✅ Three-phase matching backend functions
+- ✅ Three API endpoints with SSE progress streaming
+- ✅ Sequential button UI with progressive unlocking
+- ✅ Phase-specific display functions for artists and albums
+- ✅ State management between phases
+- ⏳ End-to-end testing and validation
+
+**Success Criteria:**
+- ✅ Phase 1 extracts unique artists and matches them
+- ✅ Phase 2 uses corrected artist names from Phase 1
+- ✅ Phase 3 uses corrected artist AND album names
+- ⏳ User can fix artist errors before they cascade to albums/tracks
+- ⏳ All three phases integrate with existing Accept/Edit/Search/Skip functionality
+- ⏳ Final track matches are more accurate than single-phase approach
+
+---
+
+**Goals:**
+- Add action buttons to "Review Required" match results
+- Enable users to accept/reject/override MusicBrainz matches
+- Support manual search for better matches
+- Allow direct metadata editing for files
+- Fix workflow gap between batch matching and renaming
+
+**Why This Phase:**
+During testing, we discovered a critical workflow gap:
+- **Problem**: Files with 70-89% confidence are flagged as "Review Required"
+- **Issue**: No way to accept, reject, or override these matches
+- **Impact**: Users are stuck - can't proceed with rename for reviewed files
+- **Example**: "ZONE - true blue (backing track)" matched at 80% but is actually the song, not backing track
+
+**User Flow:**
+```
+User sees "Review Required" item (70-89% confidence)
+  ↓
+Options:
+1. ✅ Accept Match - Use MusicBrainz match despite lower confidence
+2. 🔍 Manual Search - Search for better match in MusicBrainz
+3. ✏️ Edit Metadata - Manually enter correct artist/album/title
+4. ⏭️ Skip - Don't rename this file
+  ↓
+Match is updated → Proceed to rename preview
+```
+
+**Tasks:**
+
+**Frontend (public/js/organizer.js):**
+- [x] Add action buttons to each match result item:
+  - [x] ✅ Accept button (for review/manual items)
+  - [x] 🔍 Search button (opens manual search dialog)
+  - [x] ✏️ Edit button (opens metadata editor)
+  - [x] ⏭️ Skip button (exclude from rename)
+- [x] Create manual search modal dialog:
+  - [x] Search input (artist, album, title)
+  - [x] Display top 5 MusicBrainz results
+  - [x] Show confidence scores for each result
+  - [x] Allow selection of correct match
+  - [x] Update match result with selected item
+- [x] Create metadata editor modal:
+  - [x] Form fields: Artist, Album, Title, Year, Track Number
+  - [x] Populate with current metadata
+  - [x] Mark as "Manual Override" with 100% confidence
+  - [x] Update match result with manual data
+- [x] Update match result display:
+  - [x] Show "ACCEPTED" badge for manually accepted items
+  - [x] Show "MANUAL OVERRIDE" badge for edited items
+  - [x] Show "SKIPPED" badge for excluded items
+
+**Backend (server.js):**
+- [x] No new endpoints needed (reuse existing MusicBrainz search)
+- [x] Match result format supports manual overrides
+
+**Deliverables:**
+- ✅ Action buttons on match results (Accept/Search/Edit/Skip)
+- ✅ Manual search dialog with MusicBrainz integration
+- ✅ Metadata editor for manual overrides
+- ✅ Updated match result badges and status indicators
+
+**Success Criteria:**
+- ✅ Can accept "Review Required" matches and proceed to rename
+- ✅ Can search MusicBrainz manually and replace incorrect matches
+- ✅ Can manually edit metadata for files that don't match MusicBrainz
+- ✅ Can skip files that should not be renamed
+- ✅ All actions update the match result appropriately
+- ✅ Rename preview includes manually overridden files
+
+**UI Mockup:**
+```
+┌─────────────────────────────────────────────────────────────┐
+│ Match Results                                               │
+├─────────────────────────────────────────────────────────────┤
+│                                                             │
+│ ⚠️ ZONE - true blue                                        │
+│ MusicBrainz Match: ZONE - true blue (backing track)        │
+│ [80% match] [Review Required]                               │
+│                                                             │
+│ [✅ Accept] [🔍 Manual Search] [✏️ Edit] [⏭️ Skip]         │
+│                                                             │
+└─────────────────────────────────────────────────────────────┘
+```
+
+---
+
+### 🔄 Phase 4: Move to Live Plex Library (PAUSED)
 **Status:** 60% Complete - Backend Done, Frontend Pending
 **Estimated Time:** 3-4 hours
+**Priority:** MEDIUM (Resume after Phase 3.75)
 
 **Goals:**
 - Move renamed files from staging folder to live Plex library folder
@@ -808,6 +1044,128 @@ POST http://{ip}:{port}/library/sections/{libraryId}/refresh?X-Plex-Token={token
 
 ---
 
+### ⏳ Phase 5: YouTube Music Quality Upgrade Engine (FUTURE - HIGH PRIORITY)
+**Status:** Not Started (Planned after Phase 4)
+**Estimated Time:** 6-8 hours
+**Priority:** HIGH (Critical for legacy library improvement)
+
+**Goals:**
+- Detect low-quality files in library (MP3 < 256kbps, lossy formats)
+- Search YouTube Music for high-quality versions (FLAC/lossless)
+- Download and replace low-quality files automatically
+- Integrate with existing YT-dlp downloader infrastructure
+- Support bulk upgrade operations
+
+**Why This Phase:**
+During Phase 3.5 testing, we identified many legacy files with poor quality:
+- **MP3 128kbps** files that could be replaced with **FLAC** versions
+- **Low-bitrate** files from old CD rips or downloads
+- **Backing track** versions when the actual song exists on YouTube Music
+- Since we have YouTube Music access via the downloader module, we can upgrade these files to highest quality
+
+**Workflow:**
+```
+Phase 2: Deep scan → Detect low-quality files (bitrate < 256kbps, format = MP3)
+  ↓
+Phase 5: Quality Upgrade Candidates flagged
+  ↓
+User reviews upgrade candidates (15 files: MP3 128kbps → FLAC lossless)
+  ↓
+Search YouTube Music for each track
+  ↓
+Download FLAC version using existing YT-dlp infrastructure
+  ↓
+Replace old file with new high-quality version
+  ↓
+Re-run Phase 3.5 (Auto-Match & Rename) with new files
+  ↓
+Proceed to Phase 4 (Move to Live Library)
+```
+
+**Tasks:**
+
+**Backend (modules/organizer/upgrader.js - NEW):**
+- [ ] Create quality detection module
+  - [ ] Flag files with bitrate < 256kbps
+  - [ ] Flag MP3/lossy formats (prefer FLAC/ALAC)
+  - [ ] Generate upgrade candidate list
+- [ ] Integrate with YouTube Music search
+  - [ ] Reuse existing YT-dlp infrastructure from downloader module
+  - [ ] Search by: artist + album + title
+  - [ ] Verify match quality before download
+- [ ] Create `/api/upgrader/*` endpoints
+  - [ ] `/api/upgrader/detect` - Find upgrade candidates
+  - [ ] `/api/upgrader/search` - Search YouTube Music for track
+  - [ ] `/api/upgrader/download` - Download high-quality version
+  - [ ] `/api/upgrader/replace` - Replace old file with new (with backup)
+- [ ] Implement backup/rollback
+  - [ ] Backup original file before replacement
+  - [ ] Support rollback if upgrade fails
+  - [ ] Clean up backups after successful upgrade
+
+**Frontend (public/js/organizer.js):**
+- [ ] Add "Quality Upgrade" section after deep scan
+- [ ] Display upgrade candidates:
+  - [ ] Show current quality (MP3 128kbps)
+  - [ ] Show target quality (FLAC lossless)
+  - [ ] Checkbox to select files for upgrade
+- [ ] Add bulk upgrade workflow:
+  - [ ] Select all / deselect all buttons
+  - [ ] Search & Download Upgrades button
+  - [ ] Progress bar for bulk downloads
+- [ ] Show upgrade results:
+  - [ ] Success: File upgraded from MP3 → FLAC
+  - [ ] Failed: No match found on YouTube Music
+  - [ ] Skipped: Already high quality
+
+**Quality Thresholds:**
+- **Low Quality (Flag for upgrade)**:
+  - Bitrate < 256kbps
+  - Format: MP3, AAC (lossy)
+- **High Quality (Target)**:
+  - Format: FLAC, ALAC (lossless)
+  - Bitrate: Maximum available
+
+**Deliverables:**
+- ⏳ Quality detection and flagging system
+- ⏳ YouTube Music search integration
+- ⏳ Bulk download and replace workflow
+- ⏳ Backup and rollback capability
+- ⏳ UI for reviewing and selecting upgrade candidates
+
+**Success Criteria:**
+- ⏳ Accurately detects low-quality files
+- ⏳ Finds correct matches on YouTube Music (>90% success rate)
+- ⏳ Downloads highest quality available (FLAC preferred)
+- ⏳ Replaces files safely with backup
+- ⏳ Can rollback if upgrade fails
+- ⏳ Integrates seamlessly with Phase 3.5 (auto-match) workflow
+
+**UI Mockup:**
+```
+┌─────────────────────────────────────────────────────────────┐
+│ 🎵 Quality Upgrade Candidates                               │
+├─────────────────────────────────────────────────────────────┤
+│                                                             │
+│ ⚠️ 15 low-quality files detected (MP3 < 256kbps)           │
+│                                                             │
+│ [✓] ZONE - true blue                                        │
+│     Current: MP3 128kbps | Target: FLAC (lossless)         │
+│                                                             │
+│ [✓] Artist Name - Song Title                                │
+│     Current: MP3 192kbps | Target: FLAC (lossless)         │
+│                                                             │
+│ [✓] Another Artist - Another Song                           │
+│     Current: MP3 128kbps | Target: FLAC (lossless)         │
+│                                                             │
+│ [ Select All ] [ Deselect All ]                             │
+│                                                             │
+│ [🔍 Search & Download Upgrades] [⏭️ Skip for Now]          │
+└─────────────────────────────────────────────────────────────┘
+```
+
+---
+
 ### ⏳ Phase 6: Real-time Progress Updates (PLANNED)
 **Status:** Not Started
 **Estimated Time:** 2 hours
@@ -890,6 +1248,345 @@ POST http://{ip}:{port}/library/sections/{libraryId}/refresh?X-Plex-Token={token
 6. Poor metadata (missing tags)
 7. Network interruptions
 8. Duplicate filenames
+
+---
+
+### ⏳ Phase 8: Artist Radar & Discovery Dashboard (PLANNED - FUTURE PRIORITY)
+**Status:** Planning Phase
+**Estimated Time:** 12-15 hours
+**Priority:** HIGH (Post-v2.0.0 - Major Feature)
+
+**Overview:**
+Create an intelligent artist monitoring dashboard that uses Plex artist ratings (1-5 stars) to automatically discover new releases, missing albums, and quality upgrade opportunities from YouTube Music. This proactive system keeps favorite artists' discographies complete and up-to-date with minimal user effort.
+
+**Concept:**
+Users rate artists in Plex (1-5 stars). The dashboard scans these ratings and provides personalized recommendations based on interest level:
+
+**Artist Rating Tiers & Monitoring:**
+
+| Rating | Interest Level | New Singles | New EPs | New Albums | Complete Discography | Quality Upgrades |
+|--------|---------------|-------------|---------|------------|---------------------|------------------|
+| ⭐⭐⭐⭐⭐ (5 stars) | **Maximum** | ✅ Yes | ✅ Yes | ✅ Yes | ✅ Yes - High Priority | ✅ Yes - All tracks |
+| ⭐⭐⭐⭐ (4 stars) | **High** | ❌ No | ✅ Yes | ✅ Yes | ⚠️ Maybe - Medium Priority | ⚠️ Major releases only |
+| ⭐⭐⭐ (3 stars) | **Moderate** | ❌ No | ❌ No | ✅ Yes | ❌ No | ❌ No |
+| ⭐⭐ (2 stars) | **Low** | ❌ No | ❌ No | ⚠️ Maybe | ❌ No | ❌ No |
+| ⭐ (1 star) | **None** | ❌ No | ❌ No | ❌ No | ❌ No | ❌ No |
+
+**Dashboard Features:**
+
+```
+┌──────────────────────────────────────────────────────────────┐
+│ 🎵 Artist Radar & Discovery Dashboard                        │
+├──────────────────────────────────────────────────────────────┤
+│ Last Updated: Nov 18, 2025 9:45 PM  [🔄 Refresh Dashboard]  │
+├──────────────────────────────────────────────────────────────┤
+│                                                              │
+│ 📊 Your Library Stats                                        │
+│ ⭐⭐⭐⭐⭐ Artists: 42  |  ⭐⭐⭐⭐ Artists: 89  |  ⭐⭐⭐ Artists: 156 │
+│                                                              │
+├──────────────────────────────────────────────────────────────┤
+│ 🆕 NEW RELEASES (Last 30 Days)                               │
+├──────────────────────────────────────────────────────────────┤
+│ ⭐⭐⭐⭐⭐ BABYMETAL - "LEGEND - 43 - THE MOVIE" (Live Album)    │
+│   Released: Nov 10, 2025 | Format: FLAC                     │
+│   [🔗 YouTube Music] [⬇️ Download] [ℹ️ MusicBrainz]          │
+│                                                              │
+│ ⭐⭐⭐⭐⭐ XG - "AWE" (EP)                                        │
+│   Released: Nov 8, 2025 | Format: FLAC | 6 tracks           │
+│   [🔗 YouTube Music] [⬇️ Download] [ℹ️ MusicBrainz]          │
+│                                                              │
+│ ⭐⭐⭐⭐ Versailles - "Revival" (Album)                          │
+│   Released: Nov 1, 2025 | Format: FLAC | 12 tracks          │
+│   [🔗 YouTube Music] [⬇️ Download] [ℹ️ MusicBrainz]          │
+│                                                              │
+├──────────────────────────────────────────────────────────────┤
+│ 📀 MISSING ALBUMS (Complete Discography Gaps)                │
+├──────────────────────────────────────────────────────────────┤
+│ ⭐⭐⭐⭐⭐ BABYMETAL - "10 BABYMETAL BUDOKAN" (2021)             │
+│   You have: 8/12 studio albums                              │
+│   [🔗 YouTube Music] [⬇️ Download] [ℹ️ MusicBrainz]          │
+│                                                              │
+│ ⭐⭐⭐⭐⭐ BAND-MAID - "Epic Narratives" (2024)                  │
+│   You have: 6/8 studio albums                               │
+│   [🔗 YouTube Music] [⬇️ Download] [ℹ️ MusicBrainz]          │
+│                                                              │
+├──────────────────────────────────────────────────────────────┤
+│ 🎧 QUALITY UPGRADES AVAILABLE                                │
+├──────────────────────────────────────────────────────────────┤
+│ ⭐⭐⭐⭐⭐ XG - "SHOOTING STAR" (Your copy: MP3 320kbps)         │
+│   ⬆️ Upgrade to: FLAC Lossless (24-bit/48kHz)               │
+│   [🔗 YouTube Music] [⬇️ Download & Replace]                │
+│                                                              │
+│ ⭐⭐⭐⭐⭐ BABYMETAL - "Gimme Chocolate!!" (Your copy: MP3 256k) │
+│   ⬆️ Upgrade to: FLAC Lossless                              │
+│   [🔗 YouTube Music] [⬇️ Download & Replace]                │
+│                                                              │
+└──────────────────────────────────────────────────────────────┘
+```
+
+**Architecture:**
+
+**Data Sources:**
+1. **Plex Media Server API**
+   - Read artist ratings (1-5 stars)
+   - Fetch complete artist discography from Plex library
+   - Track metadata: artist, album, release year, format, bitrate
+
+2. **MusicBrainz API**
+   - Artist's complete discography (all releases)
+   - Release dates, types (album, EP, single, live, compilation)
+   - Track listings for each release
+
+3. **YouTube Music (via yt-dlp + AI)**
+   - Check availability of specific albums/tracks
+   - Get direct YouTube Music URLs for downloads
+   - Quality information (format, bitrate, sample rate)
+
+4. **AI Integration (Claude Code CLI / Gemini CLI)**
+   - Parse YouTube Music search results
+   - Match releases to MusicBrainz data
+   - Generate direct YouTube Music URLs
+   - Recommend best download options
+
+**Technical Implementation:**
+
+**Backend (modules/organizer/artist-radar.js - NEW):**
+- [ ] Plex Artist Rating Scanner
+  - [ ] `fetchPlexArtistRatings()` - Get all artists with ratings from Plex
+  - [ ] `getArtistDiscography(artistId)` - Fetch all albums for an artist from Plex
+  - [ ] `categorizeArtistsByRating()` - Group artists by rating tier (1-5 stars)
+
+- [ ] MusicBrainz Discography Fetcher
+  - [ ] `fetchMusicBrainzDiscography(artistName)` - Get complete discography
+  - [ ] `filterReleasesByType(releases, types)` - Filter singles/EPs/albums
+  - [ ] `getRecentReleases(artistName, days = 30)` - Find new releases
+  - [ ] `findMissingAlbums(plexAlbums, mbAlbums)` - Compare discographies
+
+- [ ] YouTube Music Integration
+  - [ ] `searchYouTubeMusic(artist, album, cookies, poToken)` - Search YT Music
+  - [ ] `getYouTubeMusicURL(artist, album)` - Get direct playlist/album URL
+  - [ ] `checkYouTubeMusicAvailability(album)` - Verify album exists on YTM
+
+- [ ] AI-Powered Discovery (Claude Code CLI / Gemini CLI)
+  - [ ] `aiSearchYouTubeMusic(artist, album)` - Use AI to search and parse
+  - [ ] `aiGenerateYouTubeMusicURL(searchResults)` - AI generates best URL
+  - [ ] `aiMatchReleaseToYouTubeMusic(mbRelease)` - Match MB release to YTM
+  - [ ] `aiRecommendBestQuality(options)` - Select best quality option
+
+- [ ] Quality Upgrade Detector
+  - [ ] `detectLowQualityTracks()` - Find MP3s, low bitrate files
+  - [ ] `findYouTubeMusicUpgrades(track)` - Check if FLAC available on YTM
+  - [ ] `calculateUpgradePriority(artistRating, currentQuality)` - Prioritize upgrades
+
+- [ ] Dashboard Data Aggregator
+  - [ ] `buildDashboardData()` - Aggregate all discovery data
+  - [ ] `categorizeDiscoveries()` - Group by type (new, missing, upgrades)
+  - [ ] `sortByPriority(discoveries)` - Sort by artist rating + recency
+  - [ ] `cacheDashboardData(ttl = 3600)` - Cache results (1 hour default)
+
+**Backend (server.js - API Endpoints):**
+- [ ] `POST /api/radar/scan` - Scan Plex artists and build dashboard data
+- [ ] `GET /api/radar/dashboard` - Get cached dashboard data
+- [ ] `POST /api/radar/refresh` - Force refresh dashboard (ignores cache)
+- [ ] `POST /api/radar/download` - Trigger YouTube Music download for specific release
+- [ ] `POST /api/radar/upgrade` - Download FLAC upgrade and replace old file
+- [ ] `GET /api/radar/artist/:id` - Get detailed discovery data for specific artist
+
+**Frontend (public/index.html - New Section):**
+- [ ] Add "Artist Radar" tab to navigation
+- [ ] Dashboard layout with three sections:
+  - [ ] New Releases (last 30/60/90 days - configurable)
+  - [ ] Missing Albums (discography gaps)
+  - [ ] Quality Upgrades (MP3 → FLAC opportunities)
+- [ ] Filter controls:
+  - [ ] Filter by artist rating (5⭐ only, 4-5⭐, 3-5⭐, etc.)
+  - [ ] Filter by release type (singles, EPs, albums)
+  - [ ] Time range selector (7/30/60/90 days)
+- [ ] Action buttons for each discovery:
+  - [ ] 🔗 Open YouTube Music URL (in new tab)
+  - [ ] ⬇️ Download (trigger YT-dlp download)
+  - [ ] ℹ️ MusicBrainz Info (open MB release page)
+  - [ ] ⏭️ Skip (hide this discovery)
+  - [ ] 📌 Save for Later (bookmark)
+
+**Frontend (public/js/radar.js - NEW):**
+- [ ] `initRadar()` - Initialize Artist Radar module
+- [ ] `loadDashboardData()` - Fetch and display dashboard
+- [ ] `handleRefreshClick()` - Refresh dashboard data
+- [ ] `handleDownloadClick(release)` - Trigger YT Music download
+- [ ] `handleUpgradeClick(track)` - Download FLAC upgrade
+- [ ] `displayNewReleases(releases)` - Render new releases section
+- [ ] `displayMissingAlbums(albums)` - Render missing albums section
+- [ ] `displayQualityUpgrades(upgrades)` - Render upgrade opportunities
+- [ ] `filterDiscoveries(filters)` - Apply user filters
+- [ ] `updateProgressSSE(eventSource)` - Handle real-time download progress
+
+**Frontend (public/css/radar.css - NEW):**
+- [ ] Dashboard grid layout
+- [ ] Discovery card styles
+- [ ] Rating tier badges (1-5 stars)
+- [ ] Release type badges (Single, EP, Album, Live)
+- [ ] Quality indicator badges (MP3, FLAC, 24-bit, etc.)
+- [ ] Action button styles
+- [ ] Filter control styles
+
+**AI Integration Strategy:**
+
+**Option 1: Claude Code CLI (Preferred)**
+```javascript
+// Backend: modules/organizer/ai-youtube-music.js
+import { exec } from 'child_process';
+
+async function aiSearchYouTubeMusic(artist, album, cookies, poToken) {
+  const prompt = `
+  Search YouTube Music for: "${artist} - ${album}"
+
+  Using the provided cookies and PO token, find the YouTube Music playlist or album URL.
+  Return ONLY the direct YouTube Music URL in this format:
+  https://music.youtube.com/playlist?list=OLAK5uy_...
+
+  If not found, return: NOT_FOUND
+  `;
+
+  // Execute Claude Code CLI with prompt
+  const command = `claude-code --prompt "${prompt}" --context "cookies=${cookies},po_token=${poToken}"`;
+
+  const result = await execAsync(command);
+
+  if (result.includes('NOT_FOUND')) {
+    return null;
+  }
+
+  // Extract URL from Claude response
+  const urlMatch = result.match(/https:\/\/music\.youtube\.com\/[^\s]+/);
+  return urlMatch ? urlMatch[0] : null;
+}
+```
+
+**Option 2: Gemini CLI (Alternative)**
+```javascript
+async function aiSearchYouTubeMusicGemini(artist, album) {
+  const prompt = `Search YouTube Music for "${artist} - ${album}" and return the direct URL.`;
+  const command = `gemini --prompt "${prompt}"`;
+
+  const result = await execAsync(command);
+  return parseURLFromGeminiResponse(result);
+}
+```
+
+**Workflow Integration:**
+
+**Step 1: User Rates Artists in Plex**
+- User opens Plex and rates artists (1-5 stars)
+- Ratings stored in Plex database
+
+**Step 2: Dashboard Scan (Manual or Scheduled)**
+```
+User clicks [🔄 Refresh Dashboard]
+  ↓
+Backend scans Plex for rated artists
+  ↓
+For each 3-5⭐ artist:
+  - Fetch Plex discography
+  - Fetch MusicBrainz complete discography
+  - Compare to find gaps
+  ↓
+For each 4-5⭐ artist:
+  - Check MusicBrainz for releases in last 30/60 days
+  - Use AI to search YouTube Music
+  - Get direct YTM URLs
+  ↓
+For each 5⭐ artist:
+  - Scan Plex library for MP3/low-bitrate files
+  - Use AI to check if FLAC version exists on YTM
+  - Flag upgrade opportunities
+  ↓
+Build dashboard data structure
+  ↓
+Cache results (1 hour TTL)
+  ↓
+Return dashboard to frontend
+```
+
+**Step 3: User Reviews Dashboard**
+```
+Dashboard displays:
+- 🆕 5 new releases from 5⭐ artists
+- 📀 8 missing albums from 5⭐ artists
+- 🎧 12 quality upgrades available
+
+User clicks [⬇️ Download] on "XG - AWE (EP)"
+  ↓
+Frontend sends download request to backend
+  ↓
+Backend calls existing YT Music downloader module
+  ↓
+Downloads XG - AWE using yt-dlp with cookies/PO token
+  ↓
+Real-time progress via SSE
+  ↓
+Download completes → Files saved to staging directory
+  ↓
+User can now run Phase 2 scan to organize new files
+```
+
+**Tasks Breakdown:**
+
+**Phase 8.1: Plex Integration (3-4 hours)**
+- [ ] Create artist-radar.js module
+- [ ] Implement Plex artist rating scanner
+- [ ] Implement Plex discography fetcher
+- [ ] Test with user's Plex library
+- [ ] Cache Plex data for performance
+
+**Phase 8.2: MusicBrainz Discovery (3-4 hours)**
+- [ ] Implement MB complete discography fetcher
+- [ ] Implement recent releases filter
+- [ ] Implement missing album detector
+- [ ] Test with various artists (Western + Japanese)
+- [ ] Handle edge cases (compilations, live albums, etc.)
+
+**Phase 8.3: AI YouTube Music Integration (4-5 hours)**
+- [ ] Research Claude Code CLI / Gemini CLI capabilities
+- [ ] Implement AI search wrapper
+- [ ] Implement URL extraction and validation
+- [ ] Test with cookies and PO token authentication
+- [ ] Handle "not available" scenarios
+- [ ] Add retry logic for AI failures
+
+**Phase 8.4: Frontend Dashboard (2-3 hours)**
+- [ ] Create radar.html section
+- [ ] Implement dashboard layout
+- [ ] Add filter controls
+- [ ] Implement download integration
+- [ ] Add real-time progress updates
+- [ ] Polish UI/UX
+
+**Deliverables:**
+- ✅ Artist rating-based monitoring system
+- ✅ New release discovery for rated artists
+- ✅ Missing album detection
+- ✅ Quality upgrade recommendations
+- ✅ AI-powered YouTube Music URL generation
+- ✅ One-click download from dashboard
+- ✅ Integration with existing YT Music downloader
+
+**Success Criteria:**
+- Dashboard accurately reflects Plex artist ratings
+- New releases detected within 24 hours of release
+- Missing albums correctly identified
+- AI successfully finds 90%+ of releases on YouTube Music
+- Downloads use existing yt-dlp infrastructure
+- Quality upgrades prioritize 5⭐ artists
+- Dashboard refresh completes in < 30 seconds for 100 rated artists
+
+**Future Enhancements:**
+- Email notifications for new releases from 5⭐ artists
+- Scheduled automatic dashboard refresh (daily/weekly)
+- Auto-download new releases from 5⭐ artists (with user opt-in)
+- Spotify/Apple Music integration for cross-platform discovery
+- Artist collaboration detection ("Featured on..." tracking)
+- Genre-based discovery ("Similar to your 5⭐ artists")
 
 ---
 
@@ -1280,7 +1977,7 @@ None - all dependencies installed
 
 ## Progress Summary
 
-**Overall Progress: 58%** (Phases 1-3.5 Complete)
+**Overall Progress: 70%** (Phases 1-3.8 Complete, Phase 4 Paused)
 
 | Phase | Status | Progress | Files |
 |-------|--------|----------|-------|
@@ -1289,13 +1986,17 @@ None - all dependencies installed
 | Phase 2.5: Plex Integration | ✅ Complete | 100% | 3 files modified |
 | Phase 3: MusicBrainz API | ✅ Complete | 100% | 5 files modified |
 | Phase 3.5: Auto-Match & Rename | ✅ Complete | 100% | 5 files modified |
-| Phase 4: Move to Live Library | ⏳ Planned | 0% | 0 files |
-| Phase 5: Real-time Progress | 🔄 Partial | 50% | SSE already implemented |
-| Phase 6: Testing & Polish | ⏳ Planned | 0% | 0 files |
+| Phase 3.75: Manual Review & Override | ✅ Complete | 100% | 2 files modified |
+| **Phase 3.8: Three-Phase Matching** | **🔄 Testing** | **95%** | **Backend & Frontend complete** |
+| Phase 4: Move to Live Library | ⏸️ Paused | 60% | Backend complete, resume after 3.8 |
+| Phase 5: YT Music Quality Upgrade | ⏳ Planned | 0% | Future feature |
+| Phase 6: Real-time Progress | 🔄 Partial | 50% | SSE already implemented |
+| Phase 7: Testing & Polish | ⏳ Planned | 0% | 0 files |
+| Phase 8: Artist Radar Dashboard | ⏳ Planned | 0% | Post-v2.0.0 feature |
 
 **Last Updated:** November 18, 2025
-**Version:** 2.0.0-alpha.4
-**Next Milestone:** Phase 4 (Move to Live Plex Library)
+**Version:** 2.0.0-alpha.5
+**Next Milestone:** Test Three-Phase MusicBrainz Matching, then complete Phase 4
 
 ---
 
@@ -1308,14 +2009,31 @@ None - all dependencies installed
 - ✅ Plex Media Server integration (Phase 2.5)
 - ✅ MusicBrainz API integration (Phase 3)
 - ✅ Auto-matching and renaming complete (Phase 3.5)
-- ⏳ Move to live library pending (Phase 4)
+- ✅ Manual review interface complete (Phase 3.75)
+- 🔄 **Three-phase matching strategy** - Refactor to Artists → Albums → Tracks
+- ⏸️ Move to live library paused (Phase 4) - Resume after matching refactor
 
 ### Next Steps
-1. Start Phase 4: Move to Live Plex Library
-2. Create organizer.js backend module
-3. Implement /api/organizer/move-to-library endpoint (SSE)
-4. Build frontend UI for live library path configuration
-5. Implement quality upgrade/downgrade handling
+1. **🚧 CURRENT: Test Three-Phase MusicBrainz Matching (Phase 3.8)**
+   - ✅ Backend implementation complete (matcher.js)
+   - ✅ API endpoints complete (server.js)
+   - ✅ Frontend UI complete (organizer.js + index.html)
+   - ⏳ End-to-end testing required
+   - Test with small dataset first (4-10 artists)
+   - Verify button unlocking works correctly
+   - Test Accept/Edit/Search/Skip integration
+2. **Resume Phase 4: Move to Live Plex Library**
+   - Backend complete, frontend UI remaining
+   - Integrate with three-phase workflow
+3. **Complete v2.0.0 Core Features**
+   - Phase 5: YouTube Music Quality Upgrade Engine
+   - Phase 6: Real-time Progress Updates (mostly done via SSE)
+   - Phase 7: Testing & Polish
+4. **Post-v2.0.0: Artist Radar Dashboard (Phase 8)**
+   - Major new feature for artist monitoring
+   - AI-powered YouTube Music discovery
+   - Quality upgrade recommendations
+   - Plex rating-based prioritization
 
 ### Testing the App
 ```bash
