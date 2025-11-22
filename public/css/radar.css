@@ -1,0 +1,338 @@
+/**
+ * Artist Radar & Discovery Dashboard Styles
+ * Coke Zero Theme: Black primary, Red secondary
+ */
+
+/* Module container */
+#module-radar {
+    display: none;
+}
+
+#module-radar.active {
+    display: block;
+}
+
+/* Plex connection section */
+.radar-plex-connection {
+    background: #1a1a1a;
+    border: 1px solid #333;
+    border-radius: 8px;
+    padding: 20px;
+    margin-bottom: 20px;
+}
+
+.radar-plex-connection h2 {
+    color: #fff;
+    margin-top: 0;
+    margin-bottom: 15px;
+    font-size: 1.4em;
+}
+
+.radar-plex-form {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+    gap: 15px;
+    margin-bottom: 15px;
+}
+
+.radar-plex-form label {
+    display: block;
+    color: #ccc;
+    margin-bottom: 5px;
+    font-size: 0.9em;
+}
+
+.radar-plex-form input,
+.radar-plex-form select {
+    width: 100%;
+    padding: 10px;
+    background: #2a2a2a;
+    border: 1px solid #444;
+    border-radius: 4px;
+    color: #fff;
+    font-size: 1em;
+}
+
+.radar-plex-form input:focus,
+.radar-plex-form select:focus {
+    outline: none;
+    border-color: #d32f2f;
+}
+
+.radar-plex-form select:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+}
+
+/* Buttons */
+.radar-action-buttons {
+    display: flex;
+    gap: 10px;
+    flex-wrap: wrap;
+}
+
+.radar-action-buttons button {
+    padding: 10px 20px;
+    background: #d32f2f;
+    color: #fff;
+    border: none;
+    border-radius: 4px;
+    cursor: pointer;
+    font-size: 1em;
+    font-weight: 500;
+    transition: background 0.2s;
+}
+
+.radar-action-buttons button:hover:not(:disabled) {
+    background: #b71c1c;
+}
+
+.radar-action-buttons button:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+}
+
+.radar-action-buttons button:active:not(:disabled) {
+    transform: scale(0.98);
+}
+
+/* Status messages */
+#radarConnectionStatus {
+    margin-top: 15px;
+    padding: 10px;
+    border-radius: 4px;
+    font-size: 0.95em;
+}
+
+#radarConnectionStatus.success {
+    background: #1b5e20;
+    color: #a5d6a7;
+    border: 1px solid #2e7d32;
+}
+
+#radarConnectionStatus.error {
+    background: #b71c1c;
+    color: #ffcdd2;
+    border: 1px solid #d32f2f;
+}
+
+/* Progress section */
+#radarScanProgress {
+    background: #1a1a1a;
+    border: 1px solid #333;
+    border-radius: 8px;
+    padding: 20px;
+    margin-bottom: 20px;
+}
+
+#radarScanProgress p {
+    color: #fff;
+    margin: 10px 0;
+}
+
+#radarScanProgress p.error {
+    color: #ef5350;
+}
+
+/* Results section */
+#radarResults {
+    margin-top: 20px;
+}
+
+#radarResults h3 {
+    color: #fff;
+    margin-top: 30px;
+    margin-bottom: 10px;
+    font-size: 1.3em;
+}
+
+.release-count {
+    color: #999;
+    font-size: 0.95em;
+    margin-bottom: 20px;
+}
+
+/* Release grid */
+.release-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
+    gap: 15px;
+    margin-bottom: 30px;
+}
+
+/* Release card */
+.release-card {
+    background: #1a1a1a;
+    border: 1px solid #333;
+    border-radius: 8px;
+    padding: 15px;
+    transition: transform 0.2s, box-shadow 0.2s;
+}
+
+.release-card:hover {
+    transform: translateY(-2px);
+    box-shadow: 0 4px 12px rgba(211, 47, 47, 0.2);
+    border-color: #d32f2f;
+}
+
+/* Release header */
+.release-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 10px;
+}
+
+.release-header strong {
+    color: #fff;
+    font-size: 1.1em;
+    flex: 1;
+    margin-right: 10px;
+}
+
+.rating-stars {
+    color: #ffd700;
+    font-size: 0.9em;
+    white-space: nowrap;
+}
+
+/* Release title */
+.release-title {
+    color: #e0e0e0;
+    font-size: 1.05em;
+    font-weight: 500;
+    margin-bottom: 10px;
+}
+
+.release-title a {
+    color: #66ccff;
+    text-decoration: none;
+}
+
+.release-title a:hover {
+    color: #99ddff;
+    text-decoration: underline;
+}
+
+/* Release metadata */
+.release-meta {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 10px;
+    margin-bottom: 15px;
+}
+
+.release-meta span {
+    font-size: 0.85em;
+    padding: 4px 8px;
+    border-radius: 3px;
+}
+
+.release-date {
+    background: #2a2a2a;
+    color: #bbb;
+}
+
+.release-type {
+    color: #fff;
+    font-weight: 500;
+}
+
+.release-type.album {
+    background: #1976d2;
+}
+
+.release-type.ep {
+    background: #7b1fa2;
+}
+
+.release-type.single {
+    background: #388e3c;
+}
+
+.release-type.unknown {
+    background: #616161;
+}
+
+.days-ago {
+    background: #2a2a2a;
+    color: #999;
+}
+
+/* Release actions */
+.release-actions {
+    display: flex;
+    gap: 8px;
+}
+
+.release-actions button {
+    flex: 1;
+    padding: 8px 12px;
+    border: none;
+    border-radius: 4px;
+    cursor: pointer;
+    font-size: 0.9em;
+    font-weight: 500;
+    transition: all 0.2s;
+}
+
+.btn-download {
+    background: #d32f2f;
+    color: #fff;
+}
+
+.btn-download:hover {
+    background: #b71c1c;
+    transform: scale(1.02);
+}
+
+.btn-ignore {
+    background: #424242;
+    color: #bbb;
+}
+
+.btn-ignore:hover {
+    background: #616161;
+    color: #fff;
+}
+
+.btn-download:active,
+.btn-ignore:active {
+    transform: scale(0.98);
+}
+
+/* Empty state */
+.empty-state {
+    color: #999;
+    text-align: center;
+    padding: 40px 20px;
+    font-size: 1.1em;
+}
+
+/* Responsive adjustments */
+@media (max-width: 768px) {
+    .release-grid {
+        grid-template-columns: 1fr;
+    }
+
+    .radar-plex-form {
+        grid-template-columns: 1fr;
+    }
+
+    .radar-action-buttons {
+        flex-direction: column;
+    }
+
+    .radar-action-buttons button {
+        width: 100%;
+    }
+
+    .release-header {
+        flex-direction: column;
+        align-items: flex-start;
+    }
+
+    .rating-stars {
+        margin-top: 5px;
+    }
+}

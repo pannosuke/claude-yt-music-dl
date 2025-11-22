@@ -13,6 +13,7 @@
     <link rel="stylesheet" href="/css/shared.css">
     <link rel="stylesheet" href="/css/downloader.css">
     <link rel="stylesheet" href="/css/organizer.css">
+    <link rel="stylesheet" href="/css/upgrader.css">
 </head>
 <body>
     <div class="app-container">
@@ -25,6 +26,10 @@
             <button class="tab-button" data-route="organizer" onclick="router.navigate('organizer')">
                 <span class="tab-icon">📁</span>
                 <span class="tab-label">Music Organizer</span>
+            </button>
+            <button class="tab-button" data-route="upgrader" onclick="router.navigate('upgrader')">
+                <span class="tab-icon">🎵</span>
+                <span class="tab-label">Quality Upgrader</span>
             </button>
         </nav>
 
@@ -801,6 +806,135 @@
             </div>
                 </div>
             </div>
+
+        </div>
+    </div>
+
+    <!-- Module 3: Quality Upgrader -->
+    <div id="module-upgrader" class="module-container">
+        <h1>Quality Upgrader</h1>
+        <p class="subtitle">Upgrade your 4-5 star rated tracks to FLAC quality from YouTube Music</p>
+
+        <div class="main-content">
+            <!-- Plex Settings -->
+            <div class="card">
+                <h2>Plex Settings</h2>
+                <div class="form-group">
+                    <label for="upgraderPlexServer">Plex Server IP:</label>
+                    <input type="text" id="upgraderPlexServer" class="input-field" placeholder="192.168.1.100">
+                </div>
+                <div class="form-group">
+                    <label for="upgraderPlexPort">Port:</label>
+                    <input type="text" id="upgraderPlexPort" class="input-field" placeholder="32400" value="32400">
+                </div>
+                <div class="form-group">
+                    <label for="upgraderPlexToken">Plex Token:</label>
+                    <input type="password" id="upgraderPlexToken" class="input-field" placeholder="Enter your Plex token">
+                </div>
+                <button type="button" id="upgraderTestConnectionBtn" class="button-secondary">
+                    🔌 Test Connection
+                </button>
+                <div id="upgraderConnectionStatus" style="display: none; margin-top: 10px;"></div>
+            </div>
+
+            <!-- Library Selection -->
+            <div id="upgraderLibraryContainer" class="card" style="display: none; margin-top: 20px;">
+                <h2>Select Music Library</h2>
+                <div id="upgraderLibraryList" class="library-list"></div>
+            </div>
+
+            <!-- Rating & Fetch Settings -->
+            <div id="upgraderSettingsContainer" class="card" style="display: none; margin-top: 20px;">
+                <h2>Settings</h2>
+                <div class="form-group">
+                    <label for="upgradeMinRating">Minimum Rating:</label>
+                    <select id="upgradeMinRating" class="input-field">
+                        <option value="5">⭐⭐⭐⭐⭐ (5 stars only)</option>
+                        <option value="4" selected>⭐⭐⭐⭐ (4-5 stars)</option>
+                        <option value="3">⭐⭐⭐ (3-5 stars)</option>
+                    </select>
+                </div>
+                <button type="button" id="fetchRatedTracksBtn" class="button-primary">
+                    🎵 Fetch Rated Tracks from Plex
+                </button>
+            </div>
+
+            <!-- Fetch Progress -->
+            <div id="upgradeRatedProgressContainer" style="display: none; margin-top: 20px;">
+                <div class="progress-text" id="upgradeRatedProgressText">Fetching rated tracks...</div>
+                <div class="progress-bar-bg">
+                    <div class="progress-bar" id="upgradeRatedProgressBar"></div>
+                </div>
+            </div>
+
+            <!-- Rated Tracks Summary -->
+            <div id="upgradeSummaryContainer" class="card" style="display: none; margin-top: 20px;">
+                <h2>Rated Tracks Summary</h2>
+                <div class="stats-grid">
+                    <div class="stat-card">
+                        <div class="label">Total Rated Tracks</div>
+                        <div class="value" id="upgradeTotalRated">0</div>
+                    </div>
+                    <div class="stat-card">
+                        <div class="label">Low Quality Candidates</div>
+                        <div class="value" id="upgradeLowQualityCount">0</div>
+                    </div>
+                    <div class="stat-card">
+                        <div class="label">Already Upgraded</div>
+                        <div class="value" id="upgradeAlreadyCount">0</div>
+                    </div>
+                </div>
+                <button type="button" id="detectUpgradesBtn" class="button-primary" style="margin-top: 15px;">
+                    🔍 Detect Upgrade Candidates
+                </button>
+            </div>
+
+            <!-- Upgrade Candidates -->
+            <div id="upgradeCandidatesContainer" class="card" style="display: none; margin-top: 20px;">
+                <h2>🎧 Upgrade Candidates</h2>
+                <div style="margin-bottom: 15px;">
+                    <button type="button" id="selectAllUpgradesBtn" class="button-secondary">
+                        Select All
+                    </button>
+                    <button type="button" id="deselectAllUpgradesBtn" class="button-secondary">
+                        Deselect All
+                    </button>
+                    <button type="button" id="scrollToBottomUpgradesBtn" class="button-secondary">
+                        ⬇️ Scroll to Bottom
+                    </button>
+                </div>
+
+                <div id="upgradeCandidatesList" class="upgrade-candidates-list"></div>
+
+                <div class="button-group" style="margin-top: 20px;">
+                    <button type="button" id="startBulkUpgradeBtn" class="button-primary">
+                        ⬇️ Download & Upgrade Selected
+                    </button>
+                </div>
+            </div>
+
+            <!-- Upgrade Progress -->
+            <div id="upgradeProgressContainer" style="display: none; margin-top: 20px;">
+                <h2>Upgrade Progress</h2>
+                <div class="progress-text" id="upgradeProgressText">Initializing...</div>
+                <div class="progress-bar-bg">
+                    <div class="progress-bar" id="upgradeProgressBar"></div>
+                </div>
+                <div style="margin-top: 10px;">
+                    <strong>Status:</strong> <span id="upgradeCurrentTrack">-</span>
+                </div>
+                <div class="upgrade-stats" style="margin-top: 10px;">
+                    <span>✅ Completed: <strong id="upgradeCompletedCount">0</strong></span>
+                    <span style="margin-left: 20px;">⚠️ Failed: <strong id="upgradeFailedCount">0</strong></span>
+                    <span style="margin-left: 20px;">🔄 In Progress: <strong id="upgradeInProgressCount">0</strong></span>
+                </div>
+            </div>
+
+            <!-- Upgrade Results -->
+            <div id="upgradeResultsContainer" class="card" style="display: none; margin-top: 20px;">
+                <h2>Upgrade Results</h2>
+                <div id="upgradeResultsList" class="rename-results-list"></div>
+            </div>
         </div>
     </div>
 
@@ -886,5 +1020,6 @@
     <script src="/js/router.js"></script>
     <script src="/js/downloader.js"></script>
     <script src="/js/organizer.js"></script>
+    <script src="/js/upgrader.js"></script>
 </body>
 </html>

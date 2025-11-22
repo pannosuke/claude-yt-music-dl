@@ -11,6 +11,7 @@ import { testConnection, getLibraries, fetchLibraryTracks, compareWithPlex } fro
 import { searchArtist, searchRelease, searchRecording, getReleaseDetails, getCacheStats, clearCache } from './modules/organizer/musicbrainz.js';
 import { batchMatchFiles, generateRenamePreviews, executeRename, getMatchStatistics, matchArtists, matchAlbums } from './modules/organizer/matcher.js';
 import { validatePath, isPathWritable, planMoveOperations, executeMoveOperations, rollbackLastOperation, triggerPlexRefresh } from './modules/organizer/organizer.js';
+import { fetchPlexTracksWithRatings, detectLowQuality, isAlreadyUpgraded, searchYouTubeMusicForTrack, downloadAndReplace, getUpgradeStats, initUpgradeDatabase } from './modules/organizer/upgrader.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -1775,6 +1776,229 @@ app.post('/api/organizer/plex-refresh', async (req, res) => {
 
   } catch (error) {
     log(`Plex refresh error: ${error.message}`, 'ERROR');
+    res.status(500).json({
+      success: false,
+      error: error.message
+    });
+  }
+});
+
+/**
+ * ========================================
+ * PHASE 5: YOUTUBE MUSIC QUALITY UPGRADE ENGINE
+ * ========================================
+ */
+
+// Initialize upgrade database on startup
+initUpgradeDatabase();
+
+/**
+ * POST /api/upgrader/fetch-rated-tracks
+ * Fetch tracks with ratings from Plex (SSE stream)
+ */
+app.post('/api/upgrader/fetch-rated-tracks', async (req, res) => {
+  log('=== FETCH RATED TRACKS REQUEST ===', 'INFO');
+
+  const { serverIp, port, token, libraryId, minRating } = req.body;
+
+  if (!serverIp || !port || !token || !libraryId) {
+    return res.status(400).json({
+      success: false,
+      error: 'Server IP, port, token, and library ID are required'
+    });
+  }
+
+  // Set SSE headers
+  res.setHeader('Content-Type', 'text/event-stream');
+  res.setHeader('Cache-Control', 'no-cache');
+  res.setHeader('Connection', 'keep-alive');
+
+  const sendProgress = (data) => {
+    res.write(`data: ${JSON.stringify(data)}\n\n`);
+  };
+
+  try {
+    const ratedTracks = await fetchPlexTracksWithRatings(
+      serverIp,
+      port,
+      token,
+      libraryId,
+      minRating || 4,
+      sendProgress
+    );
+
+    res.end();
+
+  } catch (error) {
+    log(`Fetch rated tracks error: ${error.message}`, 'ERROR');
+    sendProgress({
+      status: 'Error fetching rated tracks',
+      error: error.message,
+      completed: true
+    });
+    res.end();
+  }
+});
+
+/**
+ * POST /api/upgrader/detect
+ * Detect low-quality upgrade candidates
+ */
+app.post('/api/upgrader/detect', async (req, res) => {
+  log('=== DETECT UPGRADE CANDIDATES REQUEST ===', 'INFO');
+
+  const { tracks } = req.body;
+
+  if (!tracks || !Array.isArray(tracks)) {
+    return res.status(400).json({
+      success: false,
+      error: 'Tracks array is required'
+    });
+  }
+
+  try {
+    const candidates = detectLowQuality(tracks);
+
+    // Filter out already upgraded tracks
+    const newCandidates = candidates.filter(track => !isAlreadyUpgraded(track.filePath));
+
+    log(`Detected ${newCandidates.length} new upgrade candidates (${candidates.length - newCandidates.length} already upgraded)`, 'INFO');
+
+    res.json({
+      success: true,
+      candidates: newCandidates,
+      alreadyUpgraded: candidates.length - newCandidates.length
+    });
+
+  } catch (error) {
+    log(`Detect candidates error: ${error.message}`, 'ERROR');
+    res.status(500).json({
+      success: false,
+      error: error.message
+    });
+  }
+});
+
+/**
+ * POST /api/upgrader/search-youtube
+ * Search YouTube Music for a track
+ */
+app.post('/api/upgrader/search-youtube', async (req, res) => {
+  log('=== YOUTUBE MUSIC SEARCH REQUEST ===', 'INFO');
+
+  const { track, cookies, poToken, useMusicBrainz } = req.body;
+
+  if (!track) {
+    return res.status(400).json({
+      success: false,
+      error: 'Track data is required'
+    });
+  }
+
+  try {
+    const result = await searchYouTubeMusicForTrack(
+      track,
+      cookies,
+      poToken,
+      useMusicBrainz || false
+    );
+
+    if (result) {
+      log(`Found YouTube Music match: ${result.title}`, 'INFO');
+      res.json({
+        success: true,
+        result
+      });
+    } else {
+      log('No YouTube Music match found', 'INFO');
+      res.json({
+        success: false,
+        message: 'No match found on YouTube Music'
+      });
+    }
+
+  } catch (error) {
+    log(`YouTube Music search error: ${error.message}`, 'ERROR');
+    res.status(500).json({
+      success: false,
+      error: error.message
+    });
+  }
+});
+
+/**
+ * POST /api/upgrader/download-upgrade
+ * Download FLAC and replace original file (SSE stream)
+ */
+app.post('/api/upgrader/download-upgrade', async (req, res) => {
+  log('=== DOWNLOAD UPGRADE REQUEST ===', 'INFO');
+
+  const { track, youtubeUrl, cookies, poToken } = req.body;
+
+  log(`Track: ${track?.artist} - ${track?.title}`, 'DEBUG');
+  log(`YouTube URL: ${youtubeUrl}`, 'DEBUG');
+  log(`Cookies path: ${cookies || 'NOT PROVIDED'}`, 'DEBUG');
+  log(`PO Token: ${poToken ? 'Provided (' + poToken.substring(0, 10) + '...)' : 'NOT PROVIDED'}`, 'DEBUG');
+
+  if (!track || !youtubeUrl) {
+    return res.status(400).json({
+      success: false,
+      error: 'Track data and YouTube URL are required'
+    });
+  }
+
+  // Set SSE headers
+  res.setHeader('Content-Type', 'text/event-stream');
+  res.setHeader('Cache-Control', 'no-cache');
+  res.setHeader('Connection', 'keep-alive');
+
+  const sendProgress = (data) => {
+    res.write(`data: ${JSON.stringify(data)}\n\n`);
+  };
+
+  try {
+    const result = await downloadAndReplace(
+      track,
+      youtubeUrl,
+      cookies,
+      poToken,
+      sendProgress
+    );
+
+    log(`Successfully upgraded: ${result.newPath}`, 'INFO');
+    res.end();
+
+  } catch (error) {
+    log(`Download upgrade error: ${error.message}`, 'ERROR');
+    sendProgress({
+      status: 'Error downloading upgrade',
+      error: error.message,
+      completed: true,
+      success: false
+    });
+    res.end();
+  }
+});
+
+/**
+ * GET /api/upgrader/stats
+ * Get upgrade statistics
+ */
+app.get('/api/upgrader/stats', async (req, res) => {
+  log('=== UPGRADE STATS REQUEST ===', 'INFO');
+
+  try {
+    const stats = getUpgradeStats();
+
+    log(`Upgrade stats: ${stats.totalUpgrades} total, ${stats.recentUpgrades} recent`, 'INFO');
+
+    res.json({
+      success: true,
+      stats
+    });
+
+  } catch (error) {
+    log(`Get stats error: ${error.message}`, 'ERROR');
     res.status(500).json({
       success: false,
       error: error.message

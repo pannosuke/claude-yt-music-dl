@@ -1942,7 +1942,12 @@ function initMatcherIntegration() {
             filterButtons.forEach(b => b.classList.remove('active'));
             e.target.classList.add('active');
             currentMatchFilter = e.target.dataset.filter;
-            displayMatchResults(matchResults, currentMatchFilter);
+            // Use the correct function and variable based on the current phase
+            if (artistMatchResults && !albumMatchResults) {
+                displayArtistMatchResults(artistMatchResults, currentMatchFilter);
+            } else if (albumMatchResults) {
+                displayAlbumMatchResults(albumMatchResults, currentMatchFilter);
+            }
         });
     });
 }
@@ -2077,6 +2082,7 @@ async function handleMatchArtists() {
 
         const reader = eventSource.body.getReader();
         const decoder = new TextDecoder();
+        let buffer = '';
 
         while (true) {
             const { done, value } = await reader.read();
@@ -2086,9 +2092,12 @@ async function handleMatchArtists() {
                 break;
             }
 
-            const chunk = decoder.decode(value);
-            console.log('[Matcher] SSE chunk received:', chunk.substring(0, 200));
-            const lines = chunk.split('\n');
+            buffer += decoder.decode(value, { stream: true });
+            console.log('[Matcher] Buffer length:', buffer.length);
+            const lines = buffer.split('\n');
+
+            // Keep the last incomplete line in the buffer
+            buffer = lines.pop() || '';
 
             for (const line of lines) {
                 if (line.startsWith('data: ')) {
@@ -2243,6 +2252,16 @@ async function handleExecuteArtistRenames() {
         // Get base music path from scanData
         const musicPath = scanData.musicPath || document.getElementById('musicPath').value;
 
+        console.log('[Matcher] Sending rename request:', {
+            musicPath,
+            renamesCount: renames.length,
+            renames: renames.map(r => ({
+                originalArtist: r.originalArtist,
+                folderName: r.folderName,
+                newArtist: r.newArtist
+            }))
+        });
+
         const response = await fetch('http://localhost:3000/api/organizer/rename-artists', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
@@ -2264,18 +2283,24 @@ async function handleExecuteArtistRenames() {
                     const rename = renames.find(r => r.originalArtist === file.folderArtist);
                     if (rename) {
                         // Update file path
-                        file.filePath = file.filePath.replace(
-                            `/${rename.originalArtist}/`,
-                            `/${rename.newArtist}/`
-                        );
-                        file.relativePath = file.relativePath.replace(
-                            `${rename.originalArtist}/`,
-                            `${rename.newArtist}/`
-                        );
-                        file.folderPath = file.folderPath.replace(
-                            `${rename.originalArtist}/`,
-                            `${rename.newArtist}/`
-                        );
+                        if (file.filePath) {
+                            file.filePath = file.filePath.replace(
+                                `/${rename.originalArtist}/`,
+                                `/${rename.newArtist}/`
+                            );
+                        }
+                        if (file.relativePath) {
+                            file.relativePath = file.relativePath.replace(
+                                `${rename.originalArtist}/`,
+                                `${rename.newArtist}/`
+                            );
+                        }
+                        if (file.folderPath) {
+                            file.folderPath = file.folderPath.replace(
+                                `${rename.originalArtist}/`,
+                                `${rename.newArtist}/`
+                            );
+                        }
                         // Update folder artist
                         file.folderArtist = rename.newArtist;
                     }
@@ -2541,13 +2566,17 @@ async function handleMatchAlbums() {
 
         const reader = eventSource.body.getReader();
         const decoder = new TextDecoder();
+        let buffer = '';
 
         while (true) {
             const { done, value } = await reader.read();
             if (done) break;
 
-            const chunk = decoder.decode(value);
-            const lines = chunk.split('\n');
+            buffer += decoder.decode(value, { stream: true });
+            const lines = buffer.split('\n');
+
+            // Keep the last incomplete line in the buffer
+            buffer = lines.pop() || '';
 
             for (const line of lines) {
                 if (line.startsWith('data: ')) {
