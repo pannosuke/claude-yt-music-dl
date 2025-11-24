@@ -12,6 +12,8 @@ import { searchArtist, searchRelease, searchRecording, getReleaseDetails, getCac
 import { batchMatchFiles, generateRenamePreviews, executeRename, getMatchStatistics, matchArtists, matchAlbums } from './modules/organizer/matcher.js';
 import { validatePath, isPathWritable, planMoveOperations, executeMoveOperations, rollbackLastOperation, triggerPlexRefresh } from './modules/organizer/organizer.js';
 import { fetchPlexTracksWithRatings, detectLowQuality, isAlreadyUpgraded, searchYouTubeMusicForTrack, downloadAndReplace, getUpgradeStats, initUpgradeDatabase } from './modules/organizer/upgrader.js';
+import artistRadar from './modules/organizer/artist-radar.js';
+import simpleOrganizer from './modules/organizer/simple-organizer.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -41,7 +43,12 @@ const upload = multer({ dest: 'uploads/' });
 app.use(cors());
 app.use(express.json({ limit: '50mb' }));
 app.use(express.urlencoded({ limit: '50mb', extended: true }));
-app.use(express.static('public'));
+// Disable caching for static files during development
+app.use(express.static('public', {
+    maxAge: 0,
+    etag: false,
+    lastModified: false
+}));
 
 // Ensure uploads directory exists
 await fs.mkdir('uploads', { recursive: true });
@@ -134,7 +141,7 @@ app.post('/api/download', upload.single('cookies'), async (req, res) => {
       '-x',  // Extract audio only
       '--audio-format', 'flac',  // Convert to FLAC
       '--audio-quality', '0',  // Best quality (0-9, 0 is best)
-      '--output', path.join(outputPath, '%(artist)s/%(album)s/%(title)s.%(ext)s'),
+      '--output', path.join(outputPath, '%(album_artist,artist)s/%(album)s/%(title)s.%(ext)s'),
       '--add-metadata',  // Add metadata from video
       '--embed-thumbnail',  // Embed thumbnail as cover art
       '--convert-thumbnails', 'jpg',  // Convert WebP to JPG (FLAC-compatible)
@@ -372,14 +379,21 @@ app.post('/api/download', upload.single('cookies'), async (req, res) => {
             }
           }
 
-          // Remove NA folder if it exists and is empty
+          // Remove NA folder ONLY if it exists and is truly empty
+          // IMPORTANT: Never delete if it contains files - they may have artist info in filenames
           const naFolder = path.join(outputPath, 'NA');
           if (await fs.access(naFolder).then(() => true).catch(() => false)) {
             try {
-              await fs.rmdir(naFolder, { recursive: true });
-              log('Cleaned up NA folder', 'DEBUG');
+              // Check if folder is actually empty before deleting
+              const naContents = await fs.readdir(naFolder);
+              if (naContents.length === 0) {
+                await fs.rmdir(naFolder);
+                log('Cleaned up empty NA folder', 'DEBUG');
+              } else {
+                log(`NA folder contains ${naContents.length} items - preserving for manual processing`, 'INFO');
+              }
             } catch (err) {
-              log(`Could not remove NA folder: ${err.message}`, 'DEBUG');
+              log(`Could not check/remove NA folder: ${err.message}`, 'DEBUG');
             }
           }
         } catch (cleanupError) {
@@ -1326,9 +1340,23 @@ app.post('/api/organizer/rename-artists', async (req, res) => {
     const path = await import('path');
     const { updateArtistMetadata } = await import('./modules/organizer/metadata-updater.js');
 
+    // Placeholder folders that should be handled specially (move files individually, not rename folder)
+    const PLACEHOLDER_FOLDERS = ['NA', 'Unknown Artist', 'Unknown', 'Various Artists', 'N/A'];
+
     let renamedCount = 0;
     let metadataUpdatedCount = 0;
+    let filesMoved = 0;
     const errors = [];
+
+    // Group renames by source folder to detect placeholder folders with multiple artists
+    const renamesByFolder = {};
+    for (const rename of renames) {
+      const folderName = rename.folderName || rename.originalArtist;
+      if (!renamesByFolder[folderName]) {
+        renamesByFolder[folderName] = [];
+      }
+      renamesByFolder[folderName].push(rename);
+    }
 
     for (const rename of renames) {
       // CRITICAL: Use folderName (actual folder on disk), not originalArtist (metadata name)
@@ -1336,12 +1364,99 @@ app.post('/api/organizer/rename-artists', async (req, res) => {
       const oldPath = path.join(musicPath, folderToRename);
       const newPath = path.join(musicPath, rename.newArtist);
 
-      log(`Attempting rename: "${folderToRename}" → "${rename.newArtist}"`, 'DEBUG');
+      // Check if this is a placeholder folder
+      const isPlaceholderFolder = PLACEHOLDER_FOLDERS.includes(folderToRename);
+      const hasMultipleArtists = renamesByFolder[folderToRename] && renamesByFolder[folderToRename].length > 1;
+
+      log(`Attempting rename: "${folderToRename}" → "${rename.newArtist}" (placeholder: ${isPlaceholderFolder}, multipleArtists: ${hasMultipleArtists})`, 'DEBUG');
 
       try {
         // Check if old path exists
         await fs.access(oldPath);
 
+        // SPECIAL HANDLING: Placeholder folders with multiple artists
+        // Move files individually instead of renaming the folder
+        if (isPlaceholderFolder && hasMultipleArtists) {
+          log(`Placeholder folder "${folderToRename}" contains multiple artists - moving files individually`, 'INFO');
+
+          // For placeholder folders, we expect files in subdirectories (like NA/NA/)
+          // Scan for audio files and move them to the new artist folder
+          const fg = (await import('fast-glob')).default;
+          const audioFiles = await fg('**/*.{flac,mp3,m4a,aac,ogg,opus,wav}', {
+            cwd: oldPath,
+            absolute: false,
+            onlyFiles: true
+          });
+
+          log(`Found ${audioFiles.length} audio files in placeholder folder`, 'DEBUG');
+
+          // Helper function to extract artist from filename (format: "Artist - Track.flac")
+          const extractArtistFromFilename = (filepath) => {
+            const filename = path.basename(filepath, path.extname(filepath));
+            const dashIndex = filename.indexOf(' - ');
+            if (dashIndex > 0) {
+              return filename.substring(0, dashIndex).trim();
+            }
+            return '';
+          };
+
+          // Filter files that belong to this artist (based on metadata or filename)
+          const { parseFile } = await import('music-metadata');
+          let movedForThisArtist = 0;
+
+          for (const relativeFilePath of audioFiles) {
+            const fullFilePath = path.join(oldPath, relativeFilePath);
+
+            try {
+              // Try multiple methods to determine the artist for this file
+              const metadata = await parseFile(fullFilePath);
+              const metadataArtist = metadata.common?.artist || '';
+              const filenameArtist = extractArtistFromFilename(relativeFilePath);
+
+              // Check if this file matches the artist we're processing
+              // Priority: 1) metadata artist, 2) filename artist, 3) filename contains artist name
+              const isMatch =
+                (metadataArtist && metadataArtist === rename.originalArtist) ||
+                (filenameArtist && filenameArtist === rename.originalArtist) ||
+                (filenameArtist && filenameArtist === rename.newArtist) ||
+                relativeFilePath.includes(rename.originalArtist) ||
+                relativeFilePath.includes(rename.newArtist);
+
+              if (isMatch) {
+                log(`Match found! File: "${path.basename(relativeFilePath)}" | Metadata: "${metadataArtist}" | Filename: "${filenameArtist}" | Target: "${rename.newArtist}"`, 'DEBUG');
+
+                // Create target artist folder if it doesn't exist
+                const targetArtistPath = path.join(musicPath, rename.newArtist);
+                await fs.mkdir(targetArtistPath, { recursive: true });
+
+                // Move file to artist folder as a loose track
+                const fileName = path.basename(fullFilePath);
+                const targetFilePath = path.join(targetArtistPath, fileName);
+
+                await fs.rename(fullFilePath, targetFilePath);
+                log(`Moved file from placeholder: ${relativeFilePath} → ${rename.newArtist}/${fileName}`, 'INFO');
+
+                // Update metadata in the moved file
+                try {
+                  await updateArtistMetadata(targetFilePath, rename.newArtist, { isSingleFile: true });
+                  metadataUpdatedCount++;
+                } catch (metaError) {
+                  log(`Failed to update metadata for ${fileName}: ${metaError.message}`, 'WARN');
+                }
+
+                movedForThisArtist++;
+                filesMoved++;
+              }
+            } catch (fileError) {
+              log(`Error processing file ${relativeFilePath}: ${fileError.message}`, 'WARN');
+            }
+          }
+
+          log(`Moved ${movedForThisArtist} files for artist "${rename.newArtist}"`, 'INFO');
+          continue; // Skip normal folder rename logic
+        }
+
+        // NORMAL HANDLING: Regular folders or placeholder folders with single artist
         let folderRenamed = false;
         let targetPath = oldPath;
 
@@ -1429,12 +1544,20 @@ app.post('/api/organizer/rename-albums', async (req, res) => {
       // Use actual folder names for the rename operation
       const artistFolder = rename.folderArtist || rename.originalArtist;
       const albumFolder = rename.folderAlbum || rename.originalAlbum;
-      const oldPath = path.join(musicPath, artistFolder, albumFolder);
+
+      // Handle loose albums (albums not under an artist folder)
+      // If artistFolder is null/undefined/empty, album is at root level
+      const isLooseAlbum = !artistFolder || artistFolder === '';
+      const oldPath = isLooseAlbum
+        ? path.join(musicPath, albumFolder)  // Loose album at root
+        : path.join(musicPath, artistFolder, albumFolder);  // Normal: under artist folder
+
       const newArtistFolder = rename.newArtist;
       const newAlbumFolder = rename.newAlbum;
       const newPath = path.join(musicPath, newArtistFolder, newAlbumFolder);
 
-      log(`Attempting album rename: "${artistFolder}/${albumFolder}" → "${newArtistFolder}/${newAlbumFolder}"`, 'DEBUG');
+      const displayOldPath = isLooseAlbum ? albumFolder : `${artistFolder}/${albumFolder}`;
+      log(`Attempting album ${isLooseAlbum ? 'move' : 'rename'}: "${displayOldPath}" → "${newArtistFolder}/${newAlbumFolder}"`, 'DEBUG');
 
       try {
         // Check if old path exists
@@ -1488,8 +1611,12 @@ app.post('/api/organizer/rename-albums', async (req, res) => {
           errors.push(`${newArtistFolder}/${newAlbumFolder}: metadata update failed - ${metaError.message}`);
         }
 
-        // If artist also changed, try to clean up old artist folder if empty
-        if (artistFolder !== newArtistFolder) {
+        // If artist also changed (and not a loose album), try to clean up old artist folder if empty
+        // IMPORTANT: Never delete placeholder folders like "NA", "Unknown Artist", etc. - they may contain unprocessed files
+        const placeholderFolders = ['NA', 'Unknown Artist', 'Unknown', 'Various Artists', 'N/A'];
+        const isPlaceholderFolder = placeholderFolders.includes(artistFolder);
+
+        if (!isLooseAlbum && !isPlaceholderFolder && artistFolder !== newArtistFolder) {
           try {
             const oldArtistPath = path.join(musicPath, artistFolder);
             const remainingContents = await fs.readdir(oldArtistPath);
@@ -1500,10 +1627,12 @@ app.post('/api/organizer/rename-albums', async (req, res) => {
           } catch (cleanupError) {
             log(`Could not clean up old artist folder: ${cleanupError.message}`, 'DEBUG');
           }
+        } else if (isPlaceholderFolder) {
+          log(`Skipping cleanup of placeholder folder: ${artistFolder} (may contain unprocessed files)`, 'DEBUG');
         }
       } catch (error) {
-        log(`Rename error for ${artistFolder}/${albumFolder}: ${error.message}`, 'ERROR');
-        errors.push(`${artistFolder}/${albumFolder}: ${error.message}`);
+        log(`${isLooseAlbum ? 'Move' : 'Rename'} error for ${displayOldPath}: ${error.message}`, 'ERROR');
+        errors.push(`${displayOldPath}: ${error.message}`);
       }
     }
 
@@ -2003,6 +2132,399 @@ app.get('/api/upgrader/stats', async (req, res) => {
       success: false,
       error: error.message
     });
+  }
+});
+
+/**
+ * POST /api/radar/scan
+ * Scan rated artists and build dashboard data
+ */
+app.post('/api/radar/scan', async (req, res) => {
+  log('=== ARTIST RADAR SCAN REQUEST ===', 'INFO');
+
+  const { serverIp, port, token, libraryKey, ratingFilter } = req.body;
+
+  if (!serverIp || !port || !token || !libraryKey) {
+    return res.status(400).json({
+      success: false,
+      error: 'Missing required fields: serverIp, port, token, libraryKey'
+    });
+  }
+
+  // Set up SSE
+  res.setHeader('Content-Type', 'text/event-stream');
+  res.setHeader('Cache-Control', 'no-cache');
+  res.setHeader('Connection', 'keep-alive');
+
+  const sendProgress = (data) => {
+    res.write(`data: ${JSON.stringify(data)}\n\n`);
+  };
+
+  try {
+    artistRadar.initRadarDatabase();
+
+    const plexConfig = { serverIp, port, token, libraryKey, ratingFilter: ratingFilter || 'all' };
+
+    const dashboard = await artistRadar.buildDashboard(plexConfig, sendProgress);
+
+    console.log('[Server] Dashboard returned:', {
+      newReleasesCount: dashboard.newReleases.length,
+      missingAlbumsCount: dashboard.missingAlbums.length
+    });
+
+    // Store results in memory for the /api/radar/results endpoint
+    global.radarLastResults = {
+      newReleases: dashboard.newReleases,
+      missingAlbums: dashboard.missingAlbums,
+      timestamp: Date.now()
+    };
+
+    // Send only counts via SSE (not the full arrays - too large!)
+    const completeData = {
+      type: 'complete',
+      newReleasesCount: dashboard.newReleases.length,
+      missingAlbumsCount: dashboard.missingAlbums.length
+    };
+
+    console.log('[Server] Sending complete event with counts:', completeData);
+
+    sendProgress(completeData);
+
+    res.end();
+
+  } catch (error) {
+    log(`Radar scan error: ${error.message}`, 'ERROR');
+    sendProgress({
+      type: 'error',
+      message: error.message
+    });
+    res.end();
+  }
+});
+
+/**
+ * GET /api/radar/results
+ * Get the last scan results
+ */
+app.get('/api/radar/results', async (req, res) => {
+  log('=== GET RADAR RESULTS REQUEST ===', 'INFO');
+
+  try {
+    if (!global.radarLastResults) {
+      return res.status(404).json({
+        success: false,
+        error: 'No scan results available. Please run a scan first.'
+      });
+    }
+
+    res.json({
+      success: true,
+      newReleases: global.radarLastResults.newReleases,
+      missingAlbums: global.radarLastResults.missingAlbums,
+      timestamp: global.radarLastResults.timestamp
+    });
+
+  } catch (error) {
+    log(`Get radar results error: ${error.message}`, 'ERROR');
+    res.status(500).json({
+      success: false,
+      error: error.message
+    });
+  }
+});
+
+/**
+ * GET /api/radar/ignored
+ * Get all ignored releases
+ */
+app.get('/api/radar/ignored', async (req, res) => {
+  log('=== GET IGNORED RELEASES REQUEST ===', 'INFO');
+
+  try {
+    artistRadar.initRadarDatabase();
+    const ignored = artistRadar.getIgnoredReleases();
+
+    res.json({
+      success: true,
+      ignored
+    });
+
+  } catch (error) {
+    log(`Get ignored releases error: ${error.message}`, 'ERROR');
+    res.status(500).json({
+      success: false,
+      error: error.message
+    });
+  }
+});
+
+/**
+ * POST /api/radar/ignore
+ * Add a release to ignore list
+ */
+app.post('/api/radar/ignore', async (req, res) => {
+  log('=== IGNORE RELEASE REQUEST ===', 'INFO');
+
+  const { artistName, releaseTitle, releaseMbid, releaseType } = req.body;
+
+  if (!artistName || !releaseTitle) {
+    return res.status(400).json({
+      success: false,
+      error: 'Missing required fields: artistName, releaseTitle'
+    });
+  }
+
+  try {
+    artistRadar.initRadarDatabase();
+    const result = artistRadar.ignoreRelease(artistName, releaseTitle, releaseMbid, releaseType);
+
+    res.json({
+      success: true,
+      ...result
+    });
+
+  } catch (error) {
+    log(`Ignore release error: ${error.message}`, 'ERROR');
+    res.status(500).json({
+      success: false,
+      error: error.message
+    });
+  }
+});
+
+/**
+ * DELETE /api/radar/ignore/:id
+ * Remove a release from ignore list
+ */
+app.delete('/api/radar/ignore/:id', async (req, res) => {
+  log('=== UNIGNORE RELEASE REQUEST ===', 'INFO');
+
+  const id = parseInt(req.params.id);
+
+  if (isNaN(id)) {
+    return res.status(400).json({
+      success: false,
+      error: 'Invalid ID'
+    });
+  }
+
+  try {
+    artistRadar.initRadarDatabase();
+    const result = artistRadar.unignoreRelease(id);
+
+    res.json({
+      success: true,
+      ...result
+    });
+
+  } catch (error) {
+    log(`Unignore release error: ${error.message}`, 'ERROR');
+    res.status(500).json({
+      success: false,
+      error: error.message
+    });
+  }
+});
+
+/**
+ * ========================================
+ * PHASE 9: SIMPLE FILE ORGANIZER
+ * ========================================
+ */
+
+/**
+ * POST /api/simple-organize/scan
+ * Scan directory and read metadata from audio files (SSE stream)
+ */
+app.post('/api/simple-organize/scan', async (req, res) => {
+  log('=== SIMPLE ORGANIZER SCAN REQUEST ===', 'INFO');
+
+  const { sourcePath } = req.body;
+
+  if (!sourcePath) {
+    return res.status(400).json({
+      success: false,
+      error: 'Source path is required'
+    });
+  }
+
+  // Set SSE headers
+  res.setHeader('Content-Type', 'text/event-stream');
+  res.setHeader('Cache-Control', 'no-cache');
+  res.setHeader('Connection', 'keep-alive');
+
+  const sendProgress = (data) => {
+    res.write(`data: ${JSON.stringify(data)}\n\n`);
+  };
+
+  try {
+    // Verify source path exists
+    try {
+      await fs.access(sourcePath);
+      log(`Source path verified: ${sourcePath}`, 'DEBUG');
+    } catch (error) {
+      log(`Source path does not exist: ${sourcePath}`, 'ERROR');
+      sendProgress({
+        type: 'error',
+        error: `Source path does not exist: ${sourcePath}`
+      });
+      res.end();
+      return;
+    }
+
+    sendProgress({
+      type: 'progress',
+      status: 'Starting scan...',
+      progress: 0
+    });
+
+    const scanResults = await simpleOrganizer.scanDirectory(sourcePath, (progressData) => {
+      sendProgress({
+        type: 'progress',
+        ...progressData
+      });
+    });
+
+    log(`Scan complete: ${scanResults.successfulScans}/${scanResults.totalFiles} files scanned`, 'INFO');
+
+    // Store scan results for preview generation
+    global.simpleOrganizerLastScan = {
+      scanResults,
+      sourcePath,
+      timestamp: Date.now()
+    };
+
+    sendProgress({
+      type: 'complete',
+      scanResults,
+      message: `Scanned ${scanResults.successfulScans} files successfully`
+    });
+
+    res.end();
+
+  } catch (error) {
+    log(`Simple organizer scan error: ${error.message}`, 'ERROR');
+    sendProgress({
+      type: 'error',
+      error: error.message
+    });
+    res.end();
+  }
+});
+
+/**
+ * POST /api/simple-organize/preview
+ * Generate preview of file organization
+ */
+app.post('/api/simple-organize/preview', async (req, res) => {
+  log('=== SIMPLE ORGANIZER PREVIEW REQUEST ===', 'INFO');
+
+  const { files, destinationPath } = req.body;
+
+  if (!files || !Array.isArray(files) || files.length === 0) {
+    return res.status(400).json({
+      success: false,
+      error: 'Files array is required'
+    });
+  }
+
+  if (!destinationPath) {
+    return res.status(400).json({
+      success: false,
+      error: 'Destination path is required'
+    });
+  }
+
+  try {
+    // Verify destination path exists
+    try {
+      await fs.access(destinationPath);
+    } catch (error) {
+      return res.status(400).json({
+        success: false,
+        error: `Destination path does not exist: ${destinationPath}`
+      });
+    }
+
+    log(`Generating preview for ${files.length} files`, 'INFO');
+
+    const preview = simpleOrganizer.previewOrganization(files, destinationPath);
+
+    log(`Preview generated: ${preview.length} items`, 'INFO');
+
+    res.json({
+      success: true,
+      preview
+    });
+
+  } catch (error) {
+    log(`Preview generation error: ${error.message}`, 'ERROR');
+    res.status(500).json({
+      success: false,
+      error: error.message
+    });
+  }
+});
+
+/**
+ * POST /api/simple-organize/execute
+ * Execute file organization with SSE progress
+ */
+app.post('/api/simple-organize/execute', async (req, res) => {
+  log('=== SIMPLE ORGANIZER EXECUTE REQUEST ===', 'INFO');
+
+  const { previewData, dryRun = true, mode = 'copy' } = req.body;
+
+  if (!previewData || !Array.isArray(previewData)) {
+    return res.status(400).json({
+      success: false,
+      error: 'Preview data array is required'
+    });
+  }
+
+  log(`Executing organization for ${previewData.length} files (dryRun: ${dryRun}, mode: ${mode})`, 'INFO');
+
+  // Set SSE headers
+  res.setHeader('Content-Type', 'text/event-stream');
+  res.setHeader('Cache-Control', 'no-cache');
+  res.setHeader('Connection', 'keep-alive');
+
+  const sendProgress = (data) => {
+    res.write(`data: ${JSON.stringify(data)}\n\n`);
+  };
+
+  try {
+    const results = await simpleOrganizer.executeOrganization(
+      previewData,
+      { dryRun, mode },
+      (progressData) => {
+        sendProgress({
+          type: 'progress',
+          ...progressData
+        });
+      }
+    );
+
+    log(`Organization complete: ${results.summary.successful} successful, ${results.summary.failed} failed, ${results.summary.skipped} skipped`, 'INFO');
+
+    sendProgress({
+      type: 'complete',
+      results: results.results,
+      summary: results.summary,
+      message: dryRun
+        ? `[DRY RUN] Preview complete: ${results.summary.successful} files would be ${mode === 'copy' ? 'copied' : 'moved'}`
+        : `Organization complete: ${results.summary.successful} files ${mode === 'copy' ? 'copied' : 'moved'} successfully`
+    });
+
+    res.end();
+
+  } catch (error) {
+    log(`Execute organization error: ${error.message}`, 'ERROR');
+    sendProgress({
+      type: 'error',
+      error: error.message
+    });
+    res.end();
   }
 });
 
