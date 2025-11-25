@@ -5,6 +5,7 @@
 
 import { searchRecording, searchRelease, searchArtist } from './musicbrainz.js';
 import { isRomaji, generateJapaneseSearchVariants } from './romaji-converter.js';
+import { parseArtistWithAI, isClaudeCLIAvailable } from './ai-engine.js';
 import path from 'path';
 import fs from 'fs/promises';
 import { existsSync } from 'fs';
@@ -48,7 +49,7 @@ export async function batchMatchFiles(files, progressCallback = null) {
     for (const file of files) {
         // Extract metadata - handle both flat and nested structures
         const metadata = file.metadata || file;
-        const artist = metadata.artist || file.folderArtist || 'Unknown';
+        const artist = metadata.albumArtist || metadata.artist || file.folderArtist || 'Unknown';
         const album = metadata.album || file.folderAlbum || 'Unknown';
         const title = metadata.title || file.fileName || 'Unknown';
 
@@ -847,16 +848,46 @@ export function getMatchStatistics(matchResults) {
  * @param {Function} progressCallback - Callback for progress updates
  * @returns {Array} Artist match results with confidence scores
  */
+/**
+ * Extract artist name from filename (format: "Artist - Track.flac")
+ */
+function extractArtistFromFilename(filename) {
+    if (!filename) return null;
+
+    // Remove file extension
+    const basename = path.basename(filename, path.extname(filename));
+
+    // Look for " - " separator
+    const dashIndex = basename.indexOf(' - ');
+    if (dashIndex > 0) {
+        return basename.substring(0, dashIndex).trim();
+    }
+
+    return null;
+}
+
 export async function matchArtists(files, progressCallback = null) {
     const results = [];
+
+    // Placeholder folders that need filename parsing
+    const PLACEHOLDER_FOLDERS = ['NA', 'Unknown Artist', 'Unknown', 'Various Artists', 'N/A'];
 
     // Extract unique artists from files
     const artistMap = new Map();
 
     for (const file of files) {
         const metadata = file.metadata || file;
-        const artist = metadata.artist || file.folderArtist || 'Unknown Artist';
+        let artist = metadata.artist || file.folderArtist || 'Unknown Artist';
         const folderArtist = file.folderArtist || artist; // Track actual folder name
+
+        // SPECIAL HANDLING: If artist is from placeholder folder, try to extract from filename
+        if (PLACEHOLDER_FOLDERS.includes(artist) || PLACEHOLDER_FOLDERS.includes(folderArtist)) {
+            const filenameArtist = extractArtistFromFilename(file.fileName || file.filePath);
+            if (filenameArtist) {
+                console.log(`[Matcher] Extracted artist from filename: "${filenameArtist}" (was: "${artist}")`);
+                artist = filenameArtist;
+            }
+        }
 
         if (!artistMap.has(artist.toLowerCase())) {
             artistMap.set(artist.toLowerCase(), {
@@ -890,18 +921,32 @@ export async function matchArtists(files, progressCallback = null) {
 
             console.log(`[Matcher] Searching artist: ${artist}`);
 
-            // Search MusicBrainz for artist
-            let artistResults = await searchArtist(artist, { limit: 1 });
+            // Use AI to parse artist collaborations (feat., &, etc.)
+            let searchQuery = artist;
+            let aiParsed = null;
+
+            try {
+                aiParsed = await parseArtistWithAI(artist);
+                if (aiParsed && aiParsed.primary && aiParsed.primary !== artist) {
+                    searchQuery = aiParsed.primary;
+                    console.log(`[Matcher] AI parsed collaboration: "${artist}" → primary: "${searchQuery}", featured: [${aiParsed.featured.join(', ')}]`);
+                }
+            } catch (error) {
+                console.warn(`[Matcher] AI parsing failed, using original artist name: ${error.message}`);
+            }
+
+            // Search MusicBrainz for artist (using primary if AI parsing succeeded)
+            let artistResults = await searchArtist(searchQuery, { limit: 1 });
             let bestMatch = artistResults && artistResults.length > 0 ? artistResults[0] : null;
             let searchMethod = 'original';
 
             // If artist doesn't match well, try Japanese variants
             if (!bestMatch || bestMatch.confidence < CONFIDENCE_THRESHOLDS.REVIEW) {
-                const hasRomaji = isRomaji(artist);
+                const hasRomaji = isRomaji(searchQuery);
 
                 if (hasRomaji) {
                     console.log(`[Matcher] Artist has romaji, trying Japanese variants...`);
-                    const variants = generateJapaneseSearchVariants({ artist, album: '', title: '' });
+                    const variants = generateJapaneseSearchVariants({ artist: searchQuery, album: '', title: '' });
 
                     for (let i = 1; i < variants.length; i++) {
                         const variant = variants[i];
