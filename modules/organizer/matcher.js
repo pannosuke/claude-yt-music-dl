@@ -5,7 +5,7 @@
 
 import { searchRecording, searchRelease, searchArtist } from './musicbrainz.js';
 import { isRomaji, generateJapaneseSearchVariants } from './romaji-converter.js';
-import { parseArtistWithAI, isClaudeCLIAvailable } from './ai-engine.js';
+import { parseArtistWithAI, parseAlbumWithAI, parseTrackWithAI, isClaudeCLIAvailable } from './ai-engine.js';
 import path from 'path';
 import fs from 'fs/promises';
 import { existsSync } from 'fs';
@@ -1122,10 +1122,24 @@ export async function matchAlbums(files, artistMatches, progressCallback = null)
         try {
             const { artist, album, originalArtist } = albumData;
 
-            console.log(`[Matcher] Searching album: ${artist} - ${album}`);
+            // Use AI to parse album collaborations (feat., with, &, etc.)
+            let searchAlbum = album;
+            let albumAiParsed = null;
 
-            // Search MusicBrainz for album
-            let albumResults = await searchRelease(artist, album, { limit: 1 });
+            try {
+                albumAiParsed = await parseAlbumWithAI(album);
+                if (albumAiParsed && albumAiParsed.primary && albumAiParsed.primary !== album) {
+                    searchAlbum = albumAiParsed.primary;
+                    console.log(`[Matcher] AI parsed album collaboration: "${album}" → primary: "${searchAlbum}", featured: [${albumAiParsed.featured.join(', ')}]`);
+                }
+            } catch (error) {
+                console.warn(`[Matcher] Album AI parsing failed, using original album name: ${error.message}`);
+            }
+
+            console.log(`[Matcher] Searching album: ${artist} - ${searchAlbum}`);
+
+            // Search MusicBrainz for album (using primary if AI parsing succeeded)
+            let albumResults = await searchRelease(artist, searchAlbum, { limit: 1 });
             let bestMatch = albumResults && albumResults.length > 0 ? albumResults[0] : null;
             let searchMethod = 'original';
 
@@ -1331,10 +1345,24 @@ export async function matchTracks(files, artistMatches, albumMatches, progressCa
             const albumMatch = albumLookup.get(albumKey);
             const album = albumMatch ? albumMatch.album : originalAlbum;
 
-            console.log(`[Matcher] Searching track: ${artist} - ${album} - ${title}`);
+            // Use AI to parse track collaborations (feat., with, &, etc.)
+            let searchTitle = title;
+            let trackAiParsed = null;
 
-            // Search MusicBrainz for recording
-            let trackResults = await searchRecording(artist, album, title, { limit: 1 });
+            try {
+                trackAiParsed = await parseTrackWithAI(title);
+                if (trackAiParsed && trackAiParsed.primary && trackAiParsed.primary !== title) {
+                    searchTitle = trackAiParsed.primary;
+                    console.log(`[Matcher] AI parsed track collaboration: "${title}" → primary: "${searchTitle}", featured: [${trackAiParsed.featured.join(', ')}]`);
+                }
+            } catch (error) {
+                console.warn(`[Matcher] Track AI parsing failed, using original track title: ${error.message}`);
+            }
+
+            console.log(`[Matcher] Searching track: ${artist} - ${album} - ${searchTitle}`);
+
+            // Search MusicBrainz for recording (using primary if AI parsing succeeded)
+            let trackResults = await searchRecording(artist, album, searchTitle, { limit: 1 });
             let bestMatch = trackResults && trackResults.length > 0 ? trackResults[0] : null;
             let searchMethod = 'original';
 

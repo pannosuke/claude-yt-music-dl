@@ -85,6 +85,152 @@ Confidence should be 0-100 based on how clear the parsing was.`;
 }
 
 /**
+ * Parse album name to extract primary album and featured artists
+ * Handles collaboration syntax like "(feat. X)", "(with X)", "& Artist", etc.
+ *
+ * @param {string} albumString - Raw album string (e.g., "Greatest Hits (feat. Artist B)")
+ * @returns {Promise<{primary: string, featured: string[], full: string, confidence: number}>}
+ */
+export async function parseAlbumWithAI(albumString) {
+    console.log(`[AI Engine] Parsing album: "${albumString}"`);
+
+    // Quick check - if no collaboration keywords, return as-is
+    const collabKeywords = ['feat.', 'feat', 'featuring', 'ft.', 'ft', '&', 'and', 'with', 'vs', 'vs.', 'versus', ',', '(', ')'];
+    const hasCollaboration = collabKeywords.some(keyword =>
+        albumString.toLowerCase().includes(keyword.toLowerCase())
+    );
+
+    if (!hasCollaboration) {
+        console.log(`[AI Engine] No collaboration keywords detected in album, returning as-is`);
+        return {
+            primary: albumString.trim(),
+            featured: [],
+            full: albumString.trim(),
+            confidence: 100
+        };
+    }
+
+    // Construct prompt for Claude CLI
+    const prompt = `You are a music metadata parser. Parse this album name and extract:
+1. Primary album title (the main title without featured artists)
+2. Featured artists (any collaborators mentioned in parentheses or with keywords)
+
+Album name: "${albumString}"
+
+Examples:
+- "Greatest Hits (feat. Artist B)" → primary: "Greatest Hits", featured: ["Artist B"]
+- "The Album & Artist C" → primary: "The Album", featured: ["Artist C"]
+- "Live at Venue (with Artist D)" → primary: "Live at Venue", featured: ["Artist D"]
+- "Remixes, Artist E Edition" → primary: "Remixes", featured: ["Artist E"]
+
+Respond ONLY with valid JSON in this exact format (no markdown, no explanations):
+{"primary": "Album Title", "featured": ["Artist 1", "Artist 2"], "confidence": 95}
+
+Confidence should be 0-100 based on how clear the parsing was.`;
+
+    try {
+        const result = await callClaudeCLI(prompt);
+
+        // Parse JSON response
+        const parsed = JSON.parse(result);
+
+        // Validate response structure
+        if (!parsed.primary || !Array.isArray(parsed.featured)) {
+            throw new Error('Invalid AI response structure');
+        }
+
+        console.log(`[AI Engine] Album parsed: primary="${parsed.primary}", featured=[${parsed.featured.join(', ')}], confidence=${parsed.confidence}`);
+
+        return {
+            primary: parsed.primary.trim(),
+            featured: parsed.featured.map(f => f.trim()),
+            full: albumString.trim(),
+            confidence: parsed.confidence || 80
+        };
+
+    } catch (error) {
+        console.error(`[AI Engine] Error parsing album with AI: ${error.message}`);
+        console.log(`[AI Engine] Falling back to simple album parsing`);
+
+        // Fallback: simple heuristic parsing for albums
+        return fallbackParseAlbum(albumString);
+    }
+}
+
+/**
+ * Parse track name to extract primary track title and featured artists
+ * Handles collaboration syntax like "(feat. X)", "feat.", "&", "with", etc.
+ *
+ * @param {string} trackString - Raw track string (e.g., "Song Title (feat. Artist B)")
+ * @returns {Promise<{primary: string, featured: string[], full: string, confidence: number}>}
+ */
+export async function parseTrackWithAI(trackString) {
+    console.log(`[AI Engine] Parsing track: "${trackString}"`);
+
+    // Quick check - if no collaboration keywords, return as-is
+    const collabKeywords = ['feat.', 'feat', 'featuring', 'ft.', 'ft', '&', 'and', 'with', 'vs', 'vs.', 'versus', ',', '(', ')'];
+    const hasCollaboration = collabKeywords.some(keyword =>
+        trackString.toLowerCase().includes(keyword.toLowerCase())
+    );
+
+    if (!hasCollaboration) {
+        console.log(`[AI Engine] No collaboration keywords detected in track, returning as-is`);
+        return {
+            primary: trackString.trim(),
+            featured: [],
+            full: trackString.trim(),
+            confidence: 100
+        };
+    }
+
+    // Construct prompt for Claude CLI
+    const prompt = `You are a music metadata parser. Parse this track name and extract:
+1. Primary track title (the main title without featured artists)
+2. Featured artists (any collaborators)
+
+Track name: "${trackString}"
+
+Examples:
+- "Song Title (feat. Artist B)" → primary: "Song Title", featured: ["Artist B"]
+- "Another Song feat. Artist C & Artist D" → primary: "Another Song", featured: ["Artist C", "Artist D"]
+- "Track Name (with Artist E)" → primary: "Track Name", featured: ["Artist E"]
+- "My Song ft. Artist F" → primary: "My Song", featured: ["Artist F"]
+
+Respond ONLY with valid JSON in this exact format (no markdown, no explanations):
+{"primary": "Track Title", "featured": ["Artist 1", "Artist 2"], "confidence": 95}
+
+Confidence should be 0-100 based on how clear the parsing was.`;
+
+    try {
+        const result = await callClaudeCLI(prompt);
+
+        // Parse JSON response
+        const parsed = JSON.parse(result);
+
+        // Validate response structure
+        if (!parsed.primary || !Array.isArray(parsed.featured)) {
+            throw new Error('Invalid AI response structure');
+        }
+
+        console.log(`[AI Engine] Track parsed: primary="${parsed.primary}", featured=[${parsed.featured.join(', ')}], confidence=${parsed.confidence}`);
+
+        return {
+            primary: parsed.primary.trim(),
+            featured: parsed.featured.map(f => f.trim()),
+            full: trackString.trim(),
+            confidence: parsed.confidence || 80
+        };
+
+    } catch (error) {
+        console.error(`[AI Engine] Error parsing track with AI: ${error.message}`);
+        console.log(`[AI Engine] Falling back to simple track parsing`);
+
+        // Fallback: simple heuristic parsing for tracks
+        return fallbackParseTrack(trackString);
+    }
+}
+
+/**
  * Call Claude CLI with a prompt and return the response
  * @param {string} prompt - The prompt to send to Claude
  * @returns {Promise<string>} - Claude's response
@@ -186,6 +332,126 @@ function fallbackParse(artistString) {
 }
 
 /**
+ * Fallback parser for album names when AI fails
+ * Simple heuristic-based parsing
+ */
+function fallbackParseAlbum(albumString) {
+    console.log(`[AI Engine] Using fallback parser for album: "${albumString}"`);
+
+    const original = albumString.trim();
+
+    // Check for parentheses first (most common for albums)
+    const parenMatch = original.match(/^(.+?)\s*\((?:feat\.?|featuring|ft\.?|with)\s+(.+?)\)$/i);
+    if (parenMatch) {
+        const primary = parenMatch[1].trim();
+        const featured = parenMatch[2].split(/\s*[&,]\s*/).map(f => f.trim()).filter(f => f.length > 0);
+        console.log(`[AI Engine] Album parsed (parentheses): primary="${primary}", featured=[${featured.join(', ')}]`);
+        return {
+            primary,
+            featured,
+            full: original,
+            confidence: 70
+        };
+    }
+
+    // Try to split on common collaboration patterns
+    const patterns = [
+        /\s+feat\.?\s+/i,
+        /\s+featuring\s+/i,
+        /\s+ft\.?\s+/i,
+        /\s+with\s+/i,
+        /\s+&\s+/,
+        /\s*,\s*/
+    ];
+
+    for (const pattern of patterns) {
+        if (pattern.test(original)) {
+            const parts = original.split(pattern);
+            const primary = parts[0].trim();
+            const featured = parts.slice(1).map(p => p.trim()).filter(p => p.length > 0);
+
+            console.log(`[AI Engine] Album parsed (pattern): primary="${primary}", featured=[${featured.join(', ')}]`);
+            return {
+                primary,
+                featured,
+                full: original,
+                confidence: 60
+            };
+        }
+    }
+
+    // No collaboration detected
+    console.log(`[AI Engine] Album has no clear collaboration pattern, returning as-is`);
+    return {
+        primary: original,
+        featured: [],
+        full: original,
+        confidence: 50
+    };
+}
+
+/**
+ * Fallback parser for track names when AI fails
+ * Simple heuristic-based parsing
+ */
+function fallbackParseTrack(trackString) {
+    console.log(`[AI Engine] Using fallback parser for track: "${trackString}"`);
+
+    const original = trackString.trim();
+
+    // Check for parentheses first (most common for tracks)
+    const parenMatch = original.match(/^(.+?)\s*\((?:feat\.?|featuring|ft\.?|with)\s+(.+?)\)$/i);
+    if (parenMatch) {
+        const primary = parenMatch[1].trim();
+        const featured = parenMatch[2].split(/\s*[&,]\s*/).map(f => f.trim()).filter(f => f.length > 0);
+        console.log(`[AI Engine] Track parsed (parentheses): primary="${primary}", featured=[${featured.join(', ')}]`);
+        return {
+            primary,
+            featured,
+            full: original,
+            confidence: 70
+        };
+    }
+
+    // Try to split on common collaboration patterns
+    const patterns = [
+        /\s+feat\.?\s+/i,
+        /\s+featuring\s+/i,
+        /\s+ft\.?\s+/i,
+        /\s+with\s+/i,
+        /\s+vs\.?\s+/i,
+        /\s+versus\s+/i,
+        /\s+&\s+/,
+        /\s*,\s*/
+    ];
+
+    for (const pattern of patterns) {
+        if (pattern.test(original)) {
+            const parts = original.split(pattern);
+            const primary = parts[0].trim();
+            const featured = parts.slice(1).map(p => p.trim()).filter(p => p.length > 0);
+
+            console.log(`[AI Engine] Track parsed (pattern): primary="${primary}", featured=[${featured.join(', ')}]`);
+            return {
+                primary,
+                featured,
+                full: original,
+                confidence: 60
+            };
+        }
+    }
+
+    // No collaboration detected
+    console.log(`[AI Engine] Track has no clear collaboration pattern, returning as-is`);
+    return {
+        primary: original,
+        featured: [],
+        full: original,
+        confidence: 50
+    };
+}
+
+/**
  * Check if Claude CLI is available
  * @returns {Promise<boolean>}
  */
@@ -218,5 +484,7 @@ export async function isClaudeCLIAvailable() {
 
 export default {
     parseArtistWithAI,
+    parseAlbumWithAI,
+    parseTrackWithAI,
     isClaudeCLIAvailable
 };
