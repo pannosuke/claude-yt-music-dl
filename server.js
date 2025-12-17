@@ -12,6 +12,7 @@ import { searchArtist, searchRelease, searchRecording, getReleaseDetails, getCac
 import { batchMatchFiles, generateRenamePreviews, executeRename, getMatchStatistics, matchArtists, matchAlbums } from './modules/organizer/matcher.js';
 import { validatePath, isPathWritable, planMoveOperations, executeMoveOperations, rollbackLastOperation, triggerPlexRefresh } from './modules/organizer/organizer.js';
 import { fetchPlexTracksWithRatings, detectLowQuality, isAlreadyUpgraded, searchYouTubeMusicForTrack, downloadAndReplace, getUpgradeStats, initUpgradeDatabase } from './modules/organizer/upgrader.js';
+import { askClaudeCustom } from './modules/organizer/ai-engine.js';
 import artistRadar from './modules/organizer/artist-radar.js';
 import simpleOrganizer from './modules/organizer/simple-organizer.js';
 
@@ -377,6 +378,42 @@ app.post('/api/download', upload.single('cookies'), async (req, res) => {
               await fs.unlink(jpgFile);
               log(`Cleaned up thumbnail: ${path.basename(jpgFile)}`, 'DEBUG');
             }
+          }
+
+          // Post-process: Add ALBUMARTIST tag to all FLAC files
+          // YouTube Music doesn't provide ALBUMARTIST, but Plex needs it to avoid "Various Artists"
+          // Use the artist folder name as ALBUMARTIST (folder structure: Artist/Album/track.flac)
+          sendProgress({ status: 'Post-processing: Adding ALBUMARTIST tags for Plex compatibility...', progress: 98 });
+          const flacFiles = await fg('**/*.flac', { cwd: outputPath, absolute: true });
+          let albumArtistUpdated = 0;
+
+          for (const flacFile of flacFiles) {
+            try {
+              const relativePath = path.relative(outputPath, flacFile);
+              const pathParts = relativePath.split(path.sep);
+
+              // Only process files in Artist/Album/track.flac structure
+              if (pathParts.length >= 2) {
+                const artistFolder = pathParts[0]; // The artist folder name is the album artist
+
+                // Use spawn to avoid shell escaping issues
+                const { spawn: spawnSync } = await import('child_process');
+                await new Promise((resolve, reject) => {
+                  const proc = spawnSync('metaflac', [`--set-tag=ALBUMARTIST=${artistFolder}`, flacFile], {
+                    stdio: ['ignore', 'pipe', 'pipe']
+                  });
+                  proc.on('close', (code) => code === 0 ? resolve() : reject(new Error(`metaflac exit ${code}`)));
+                  proc.on('error', reject);
+                });
+                albumArtistUpdated++;
+              }
+            } catch (metaErr) {
+              log(`Failed to add ALBUMARTIST to ${path.basename(flacFile)}: ${metaErr.message}`, 'WARN');
+            }
+          }
+
+          if (albumArtistUpdated > 0) {
+            log(`Added ALBUMARTIST tag to ${albumArtistUpdated} files for Plex compatibility`, 'INFO');
           }
 
           // Remove NA folder ONLY if it exists and is truly empty
@@ -1463,21 +1500,117 @@ app.post('/api/organizer/rename-artists', async (req, res) => {
         // Check if rename is needed (folder name different from new artist name)
         if (folderToRename !== rename.newArtist) {
           // Check if new path already exists
+          let targetExists = false;
           try {
             await fs.access(newPath);
-            log(`Target folder already exists: ${newPath}`, 'WARN');
-            errors.push(`${rename.newArtist} folder already exists`);
-            continue;
+            targetExists = true;
           } catch {
-            // New path doesn't exist - good!
+            // New path doesn't exist
           }
 
-          // Perform rename
-          await fs.rename(oldPath, newPath);
-          log(`Renamed folder: ${oldPath} → ${newPath}`, 'INFO');
-          renamedCount++;
-          folderRenamed = true;
-          targetPath = newPath;
+          if (targetExists) {
+            // TARGET EXISTS: Merge contents instead of renaming
+            log(`Target folder "${rename.newArtist}" already exists - merging contents from "${folderToRename}"`, 'INFO');
+
+            try {
+              // Get all subdirectories (albums) in the source folder
+              const sourceEntries = await fs.readdir(oldPath, { withFileTypes: true });
+              let mergedCount = 0;
+
+              for (const entry of sourceEntries) {
+                const sourcePath = path.join(oldPath, entry.name);
+                const destPath = path.join(newPath, entry.name);
+
+                if (entry.isDirectory()) {
+                  // Check if album folder already exists in target
+                  let albumExists = false;
+                  try {
+                    await fs.access(destPath);
+                    albumExists = true;
+                  } catch {
+                    // Album doesn't exist in target - can move directly
+                  }
+
+                  if (albumExists) {
+                    // Album folder exists - need to merge files inside
+                    log(`Album "${entry.name}" exists in both folders - merging files`, 'INFO');
+                    const albumFiles = await fs.readdir(sourcePath, { withFileTypes: true });
+                    for (const file of albumFiles) {
+                      if (file.isFile()) {
+                        const sourceFile = path.join(sourcePath, file.name);
+                        let destFile = path.join(destPath, file.name);
+
+                        // Check if file exists and add suffix if needed
+                        try {
+                          await fs.access(destFile);
+                          // File exists - add suffix
+                          const ext = path.extname(file.name);
+                          const baseName = path.basename(file.name, ext);
+                          destFile = path.join(destPath, `${baseName}_merged${ext}`);
+                          log(`File conflict - renaming to: ${path.basename(destFile)}`, 'WARN');
+                        } catch {
+                          // File doesn't exist - good
+                        }
+
+                        await fs.rename(sourceFile, destFile);
+                        mergedCount++;
+                      }
+                    }
+
+                    // Try to remove the now-empty album folder in source
+                    try {
+                      await fs.rmdir(sourcePath);
+                      log(`Removed empty album folder: ${entry.name}`, 'DEBUG');
+                    } catch {
+                      // Folder not empty or other error - leave it
+                    }
+                  } else {
+                    // Move entire album folder to target
+                    await fs.rename(sourcePath, destPath);
+                    log(`Moved album folder: ${entry.name}`, 'INFO');
+                    mergedCount++;
+                  }
+                } else if (entry.isFile()) {
+                  // Move loose files directly
+                  let destFile = destPath;
+                  try {
+                    await fs.access(destFile);
+                    const ext = path.extname(entry.name);
+                    const baseName = path.basename(entry.name, ext);
+                    destFile = path.join(newPath, `${baseName}_merged${ext}`);
+                  } catch {
+                    // File doesn't exist - good
+                  }
+                  await fs.rename(sourcePath, destFile);
+                  mergedCount++;
+                }
+              }
+
+              // Try to remove the now-empty source folder
+              try {
+                await fs.rmdir(oldPath);
+                log(`Removed empty source folder: ${folderToRename}`, 'INFO');
+              } catch (rmErr) {
+                log(`Could not remove source folder (may not be empty): ${rmErr.message}`, 'WARN');
+              }
+
+              log(`Merged ${mergedCount} items from "${folderToRename}" into "${rename.newArtist}"`, 'INFO');
+              targetPath = newPath;
+              renamedCount++; // Count as a successful operation
+
+            } catch (mergeError) {
+              log(`Merge failed: ${mergeError.message}`, 'ERROR');
+              errors.push(`${folderToRename}: merge failed - ${mergeError.message}`);
+              continue;
+            }
+          } else {
+            // TARGET DOESN'T EXIST: Simple rename
+            await fs.rename(oldPath, newPath);
+            log(`Renamed folder: ${oldPath} → ${newPath}`, 'INFO');
+            renamedCount++;
+            folderRenamed = true;
+            targetPath = newPath;
+          }
         } else {
           // Folder name is already correct, but metadata may still need updating
           log(`Folder name already correct: ${folderToRename}`, 'DEBUG');
@@ -1518,9 +1651,10 @@ app.post('/api/organizer/rename-artists', async (req, res) => {
 /**
  * POST /api/organizer/rename-albums
  * Rename album folders based on Phase 2 matching results
+ * Returns SSE stream for real-time progress updates
  */
 app.post('/api/organizer/rename-albums', async (req, res) => {
-  log('=== RENAME ALBUMS REQUEST ===', 'INFO');
+  log('=== RENAME ALBUMS REQUEST (SSE) ===', 'INFO');
 
   const { musicPath, renames } = req.body;
 
@@ -1531,16 +1665,49 @@ app.post('/api/organizer/rename-albums', async (req, res) => {
     });
   }
 
+  // Set up SSE
+  res.setHeader('Content-Type', 'text/event-stream');
+  res.setHeader('Cache-Control', 'no-cache');
+  res.setHeader('Connection', 'keep-alive');
+  res.flushHeaders();
+
+  // Helper to send SSE events
+  const sendProgress = (data) => {
+    res.write(`data: ${JSON.stringify(data)}\n\n`);
+  };
+
   try {
     const fs = await import('fs/promises');
     const path = await import('path');
-    const { updateAlbumMetadata, updateArtistMetadata } = await import('./modules/organizer/metadata-updater.js');
+    const { updateTrackMetadata } = await import('./modules/organizer/metadata-updater.js');
+    const { parseFile } = await import('music-metadata');
+    const fg = (await import('fast-glob')).default;
 
     let renamedCount = 0;
     let metadataUpdatedCount = 0;
+    let trackFilesRenamed = 0;
     const errors = [];
+    const totalAlbums = renames.length;
 
-    for (const rename of renames) {
+    // Send initial progress
+    sendProgress({
+      type: 'start',
+      totalAlbums,
+      message: `Starting to process ${totalAlbums} album(s)...`
+    });
+
+    // Helper: Sanitize filename (remove invalid characters)
+    const sanitizeFilename = (str) => {
+      if (!str) return '';
+      return str
+        .replace(/[/\\:*?"<>|]/g, '_')
+        .replace(/\s+/g, ' ')
+        .replace(/\.+$/g, '')
+        .trim();
+    };
+
+    for (let albumIndex = 0; albumIndex < renames.length; albumIndex++) {
+      const rename = renames[albumIndex];
       // Use actual folder names for the rename operation
       const artistFolder = rename.folderArtist || rename.originalArtist;
       const albumFolder = rename.folderAlbum || rename.originalAlbum;
@@ -1559,6 +1726,17 @@ app.post('/api/organizer/rename-albums', async (req, res) => {
       const displayOldPath = isLooseAlbum ? albumFolder : `${artistFolder}/${albumFolder}`;
       log(`Attempting album ${isLooseAlbum ? 'move' : 'rename'}: "${displayOldPath}" → "${newArtistFolder}/${newAlbumFolder}"`, 'DEBUG');
 
+      // Send album progress
+      sendProgress({
+        type: 'album',
+        current: albumIndex + 1,
+        total: totalAlbums,
+        artist: newArtistFolder,
+        album: newAlbumFolder,
+        phase: 'starting',
+        message: `Processing album ${albumIndex + 1}/${totalAlbums}: ${newArtistFolder} - ${newAlbumFolder}`
+      });
+
       try {
         // Check if old path exists
         await fs.access(oldPath);
@@ -1575,40 +1753,152 @@ app.post('/api/organizer/rename-albums', async (req, res) => {
 
         // Check if rename is needed (old path !== new path)
         const needsRename = oldPath !== newPath;
+        // Check if it's just a case change (same path case-insensitively)
+        const isCaseChangeOnly = needsRename && oldPath.toLowerCase() === newPath.toLowerCase();
         let targetPath = newPath;
 
         if (needsRename) {
-          // Check if new album path already exists
-          try {
-            await fs.access(newPath);
-            log(`Target album folder already exists: ${newPath}`, 'WARN');
-            errors.push(`${newArtistFolder}/${newAlbumFolder} folder already exists`);
-            continue;
-          } catch {
-            // New path doesn't exist - good!
-          }
+          if (isCaseChangeOnly) {
+            // Case change on macOS: rename via temp folder to work around case-insensitive filesystem
+            const tempPath = oldPath + '_temp_rename_' + Date.now();
+            await fs.rename(oldPath, tempPath);
+            await fs.rename(tempPath, newPath);
+            log(`Renamed album folder (case change): ${oldPath} → ${newPath}`, 'INFO');
+            renamedCount++;
+          } else {
+            // Check if new album path already exists (different folder)
+            try {
+              await fs.access(newPath);
+              // Check if it's actually the same folder we're trying to rename
+              // (this can happen on case-insensitive filesystems)
+              const oldStat = await fs.stat(oldPath).catch(() => null);
+              const newStat = await fs.stat(newPath).catch(() => null);
 
-          // Perform rename
-          await fs.rename(oldPath, newPath);
-          log(`Renamed album folder: ${oldPath} → ${newPath}`, 'INFO');
-          renamedCount++;
+              if (oldStat && newStat && oldStat.ino === newStat.ino) {
+                // Same inode - it's the same folder, just different case
+                // Rename via temp folder
+                const tempPath = oldPath + '_temp_rename_' + Date.now();
+                await fs.rename(oldPath, tempPath);
+                await fs.rename(tempPath, newPath);
+                log(`Renamed album folder (same inode): ${oldPath} → ${newPath}`, 'INFO');
+                renamedCount++;
+              } else {
+                // Actually different folder - can't overwrite, but still process source folder
+                log(`Target album folder already exists (different folder): ${newPath}`, 'WARN');
+                log(`Will still update metadata and rename tracks in source folder: ${oldPath}`, 'INFO');
+                // Update the SOURCE folder since we can't move/merge to target
+                targetPath = oldPath;
+              }
+            } catch {
+              // New path doesn't exist - good! Perform normal rename
+              await fs.rename(oldPath, newPath);
+              log(`Renamed album folder: ${oldPath} → ${newPath}`, 'INFO');
+              renamedCount++;
+            }
+          }
         } else {
           // No rename needed - folder already has correct name
           log(`Album folder already correct: ${newPath}`, 'INFO');
           targetPath = oldPath; // Use existing path for metadata update
         }
 
-        // Update metadata in all files (whether renamed or not)
+        // Process track files: rename based on title metadata and update metadata if needed
         try {
-          // Update both artist and album metadata for all tracks
-          const artistUpdated = await updateArtistMetadata(targetPath, rename.newArtist);
-          const albumUpdated = await updateAlbumMetadata(targetPath, rename.newAlbum);
+          const audioFiles = await fg('**/*.{flac,mp3,m4a,aac,ogg,opus,wav}', {
+            cwd: targetPath,
+            absolute: true,
+            onlyFiles: true
+          });
 
-          metadataUpdatedCount += Math.max(artistUpdated, albumUpdated); // Avoid double-counting same files
-          log(`Updated metadata in ${Math.max(artistUpdated, albumUpdated)} files (artist + album tags)`, 'INFO');
-        } catch (metaError) {
-          log(`Failed to update metadata: ${metaError.message}`, 'WARN');
-          errors.push(`${newArtistFolder}/${newAlbumFolder}: metadata update failed - ${metaError.message}`);
+          const totalTracks = audioFiles.length;
+          log(`Found ${totalTracks} audio files to potentially rename in ${targetPath}`, 'DEBUG');
+
+          // Send progress: starting track processing
+          sendProgress({
+            type: 'album',
+            current: albumIndex + 1,
+            total: totalAlbums,
+            artist: newArtistFolder,
+            album: newAlbumFolder,
+            phase: 'tracks',
+            trackCount: totalTracks,
+            message: `Processing ${totalTracks} track(s): ${newArtistFolder} - ${newAlbumFolder}`
+          });
+
+          for (let trackIndex = 0; trackIndex < audioFiles.length; trackIndex++) {
+            const filePath = audioFiles[trackIndex];
+            try {
+              // Read metadata from file
+              const metadata = await parseFile(filePath);
+              const title = metadata.common?.title;
+              const trackNum = metadata.common?.track?.no;
+              const currentArtist = metadata.common?.artist;
+              const currentAlbumArtist = metadata.common?.albumartist;
+              const currentAlbum = metadata.common?.album;
+
+              if (!title) {
+                log(`Skipping file without title metadata: ${path.basename(filePath)}`, 'DEBUG');
+                continue;
+              }
+
+              // Build new filename: "01 - Title.ext" or "Title.ext" if no track number
+              const ext = path.extname(filePath);
+              const sanitizedTitle = sanitizeFilename(title);
+              const newFilename = trackNum
+                ? `${String(trackNum).padStart(2, '0')} - ${sanitizedTitle}${ext}`
+                : `${sanitizedTitle}${ext}`;
+              const newFilePath = path.join(path.dirname(filePath), newFilename);
+
+              // Track the final path for metadata update (may be original or renamed)
+              let finalFilePath = filePath;
+              let wasRenamed = false;
+
+              // Rename file if filename is different
+              if (filePath !== newFilePath) {
+                // Check if target already exists
+                try {
+                  await fs.access(newFilePath);
+                  log(`Target file already exists, skipping rename: ${newFilename}`, 'WARN');
+                  // Don't rename, but still update metadata on the original file
+                } catch {
+                  // Target doesn't exist - good! Rename the file
+                  await fs.rename(filePath, newFilePath);
+                  log(`Renamed track file: ${path.basename(filePath)} → ${newFilename}`, 'INFO');
+                  trackFilesRenamed++;
+                  finalFilePath = newFilePath;
+                  wasRenamed = true;
+                }
+              }
+
+              // Check if metadata needs updating (skip if already correct)
+              const artistNeedsUpdate = currentArtist !== rename.newArtist;
+              const albumArtistNeedsUpdate = currentAlbumArtist !== rename.newArtist;
+              const albumNeedsUpdate = currentAlbum !== rename.newAlbum;
+              const needsMetadataUpdate = artistNeedsUpdate || albumArtistNeedsUpdate || albumNeedsUpdate;
+
+              if (needsMetadataUpdate) {
+                try {
+                  await updateTrackMetadata(finalFilePath, {
+                    title: title,
+                    artist: rename.newArtist,
+                    albumArtist: rename.newArtist,
+                    album: rename.newAlbum,
+                    track: trackNum || null
+                  });
+                  log(`Updated track metadata: ${path.basename(finalFilePath)}`, 'DEBUG');
+                } catch (trackMetaErr) {
+                  log(`Failed to update track metadata: ${trackMetaErr.message}`, 'WARN');
+                }
+              } else if (!wasRenamed) {
+                log(`Skipping ${path.basename(finalFilePath)} - filename and metadata already correct`, 'DEBUG');
+              }
+            } catch (fileError) {
+              log(`Error processing track file ${path.basename(filePath)}: ${fileError.message}`, 'WARN');
+            }
+          }
+        } catch (trackRenameError) {
+          log(`Failed to rename track files: ${trackRenameError.message}`, 'WARN');
+          errors.push(`${newArtistFolder}/${newAlbumFolder}: track file rename failed - ${trackRenameError.message}`);
         }
 
         // If artist also changed (and not a loose album), try to clean up old artist folder if empty
@@ -1636,19 +1926,26 @@ app.post('/api/organizer/rename-albums', async (req, res) => {
       }
     }
 
-    res.json({
+    // Send completion event
+    sendProgress({
+      type: 'complete',
       success: true,
       renamedCount,
       metadataUpdatedCount,
+      trackFilesRenamed,
       errors: errors.length > 0 ? errors : undefined,
-      message: `Renamed ${renamedCount} album folder(s), updated metadata in ${metadataUpdatedCount} files`
+      message: `Renamed ${renamedCount} album folder(s), ${trackFilesRenamed} track file(s), updated metadata in ${metadataUpdatedCount} files`
     });
+    res.end();
   } catch (error) {
     log(`Album rename error: ${error.message}`, 'ERROR');
-    res.status(500).json({
+    // Send error event
+    sendProgress({
+      type: 'error',
       success: false,
       error: error.message
     });
+    res.end();
   }
 });
 
@@ -1905,6 +2202,64 @@ app.post('/api/organizer/plex-refresh', async (req, res) => {
 
   } catch (error) {
     log(`Plex refresh error: ${error.message}`, 'ERROR');
+    res.status(500).json({
+      success: false,
+      error: error.message
+    });
+  }
+});
+
+/**
+ * POST /api/organizer/ask-claude
+ * Custom Claude AI query for user prompts
+ */
+app.post('/api/organizer/ask-claude', async (req, res) => {
+  log('=== ASK CLAUDE REQUEST ===', 'INFO');
+
+  const { entityType, entityName, userPrompt, files } = req.body;
+
+  if (!entityType || !entityName || !userPrompt) {
+    return res.status(400).json({
+      success: false,
+      error: 'Entity type, name, and user prompt are required'
+    });
+  }
+
+  if (entityType !== 'artist' && entityType !== 'album') {
+    return res.status(400).json({
+      success: false,
+      error: 'Entity type must be "artist" or "album"'
+    });
+  }
+
+  try {
+    log(`Asking Claude about ${entityType}: "${entityName}"`, 'INFO');
+    log(`User prompt: "${userPrompt}"`, 'DEBUG');
+
+    const result = await askClaudeCustom(entityType, entityName, userPrompt, files || []);
+
+    log('Claude response received', 'INFO');
+
+    // Handle failed Claude response (e.g., timeout)
+    if (!result.success) {
+      return res.json({
+        success: false,
+        error: result.analysis || 'Claude failed to respond'
+      });
+    }
+
+    // Wrap the result so frontend can access data.result.analysis
+    res.json({
+      success: true,
+      result: {
+        analysis: result.analysis,
+        suggested: result.suggested,
+        confidence: result.confidence
+      }
+    });
+
+  } catch (error) {
+    log(`Ask Claude error: ${error.message}`, 'ERROR');
     res.status(500).json({
       success: false,
       error: error.message
@@ -2242,7 +2597,10 @@ app.get('/api/radar/ignored', async (req, res) => {
 
   try {
     artistRadar.initRadarDatabase();
-    const ignored = artistRadar.getIgnoredReleases();
+
+    // Support compilationsOnly query parameter
+    const compilationsOnly = req.query.compilationsOnly === 'true';
+    const ignored = artistRadar.getIgnoredReleases(compilationsOnly);
 
     res.json({
       success: true,
@@ -2293,6 +2651,120 @@ app.post('/api/radar/ignore', async (req, res) => {
 });
 
 /**
+ * POST /api/radar/compilations
+ * Find compilation opportunities for rated artists
+ */
+app.post('/api/radar/compilations', async (req, res) => {
+  log('=== COMPILATION OPPORTUNITIES SCAN REQUEST ===', 'INFO');
+
+  const { serverIp, port, token, libraryKey, ratingFilter } = req.body;
+
+  if (!serverIp || !port || !token || !libraryKey) {
+    return res.status(400).json({
+      success: false,
+      error: 'Missing required fields: serverIp, port, token, libraryKey'
+    });
+  }
+
+  try {
+    // Set SSE headers
+    res.setHeader('Content-Type', 'text/event-stream');
+    res.setHeader('Cache-Control', 'no-cache');
+    res.setHeader('Connection', 'keep-alive');
+    res.flushHeaders();
+
+    // Fetch rated artists first
+    const allRatedArtists = await artistRadar.fetchRatedArtists({ serverIp, port, token, libraryKey });
+
+    // Apply rating filter
+    let ratedArtists = allRatedArtists;
+    if (ratingFilter && ratingFilter !== 'all') {
+      ratedArtists = allRatedArtists.filter(artist => {
+        if (ratingFilter === '5') {
+          return artist.rating === 5;
+        } else if (ratingFilter === '4-5') {
+          return artist.rating >= 4;
+        } else if (ratingFilter === '3-5') {
+          return artist.rating >= 3;
+        } else if (ratingFilter === '2-5') {
+          return artist.rating >= 2;
+        }
+        return true;
+      });
+    }
+
+    log(`Starting compilation scan for ${ratedArtists.length} artists`, 'INFO');
+
+    // Send progress callback
+    const progressCallback = (data) => {
+      res.write(`data: ${JSON.stringify(data)}\n\n`);
+    };
+
+    // Find compilation opportunities
+    const opportunities = await artistRadar.findCompilationOpportunities(
+      { serverIp, port, token, libraryKey },
+      ratedArtists,
+      progressCallback
+    );
+
+    log(`Compilation scan complete: ${opportunities.length} opportunities found`, 'INFO');
+
+    // Store results in global memory
+    global.radarCompilationOpportunities = {
+      opportunities,
+      timestamp: Date.now()
+    };
+
+    // Send completion event
+    res.write(`data: ${JSON.stringify({
+      type: 'complete',
+      message: 'Compilation scan complete',
+      opportunitiesCount: opportunities.length
+    })}\n\n`);
+
+    res.end();
+
+  } catch (error) {
+    log(`Compilation scan error: ${error.message}`, 'ERROR');
+    res.write(`data: ${JSON.stringify({
+      type: 'error',
+      message: error.message
+    })}\n\n`);
+    res.end();
+  }
+});
+
+/**
+ * GET /api/radar/compilations
+ * Get the last compilation scan results
+ */
+app.get('/api/radar/compilations', async (req, res) => {
+  log('=== GET COMPILATION OPPORTUNITIES REQUEST ===', 'INFO');
+
+  try {
+    if (!global.radarCompilationOpportunities) {
+      return res.status(404).json({
+        success: false,
+        error: 'No compilation scan results available. Please run a scan first.'
+      });
+    }
+
+    res.json({
+      success: true,
+      opportunities: global.radarCompilationOpportunities.opportunities,
+      timestamp: global.radarCompilationOpportunities.timestamp
+    });
+
+  } catch (error) {
+    log(`Get compilation opportunities error: ${error.message}`, 'ERROR');
+    res.status(500).json({
+      success: false,
+      error: error.message
+    });
+  }
+});
+
+/**
  * DELETE /api/radar/ignore/:id
  * Remove a release from ignore list
  */
@@ -2319,6 +2791,242 @@ app.delete('/api/radar/ignore/:id', async (req, res) => {
 
   } catch (error) {
     log(`Unignore release error: ${error.message}`, 'ERROR');
+    res.status(500).json({
+      success: false,
+      error: error.message
+    });
+  }
+});
+
+/**
+ * POST /api/radar/find-duplicates
+ * Find duplicate tracks in Plex library that would be replaced by a compilation
+ */
+app.post('/api/radar/find-duplicates', async (req, res) => {
+  log('=== FIND DUPLICATES REQUEST ===', 'INFO');
+
+  const { serverIp, port, token, artistName, releaseMbid, releaseTitle } = req.body;
+
+  if (!serverIp || !port || !token || !artistName || !releaseMbid) {
+    return res.status(400).json({
+      success: false,
+      error: 'Missing required parameters: serverIp, port, token, artistName, releaseMbid'
+    });
+  }
+
+  try {
+    // Normalize server IP (convert plex.local to 127.0.0.1)
+    const normalizedIp = serverIp === 'plex.local' || serverIp === 'localhost' ? '127.0.0.1' : serverIp;
+
+    const plexConfig = {
+      serverIp: normalizedIp,
+      port,
+      token
+    };
+
+    log(`Finding duplicates for ${artistName} - ${releaseTitle} (MBID: ${releaseMbid})`, 'INFO');
+
+    const result = await artistRadar.findCompilationDuplicates(plexConfig, artistName, releaseMbid);
+
+    if (result.error) {
+      return res.json({
+        success: false,
+        error: result.error,
+        compilationTracks: result.compilationTracks
+      });
+    }
+
+    res.json({
+      success: true,
+      artist: result.artist,
+      compilationTracks: result.compilationTracks,
+      duplicates: result.duplicates,
+      releaseTitle
+    });
+
+  } catch (error) {
+    log(`Find duplicates error: ${error.message}`, 'ERROR');
+    res.status(500).json({
+      success: false,
+      error: error.message
+    });
+  }
+});
+
+/**
+ * POST /api/radar/delete-duplicates
+ * Permanently delete duplicate files from filesystem
+ */
+app.post('/api/radar/delete-duplicates', async (req, res) => {
+  log('=== DELETE DUPLICATES REQUEST ===', 'INFO');
+
+  const { filePaths } = req.body;
+
+  if (!filePaths || !Array.isArray(filePaths) || filePaths.length === 0) {
+    return res.status(400).json({
+      success: false,
+      error: 'Missing required parameter: filePaths (array)'
+    });
+  }
+
+  try {
+    log(`Deleting ${filePaths.length} duplicate files`, 'INFO');
+
+    const result = await artistRadar.deleteDuplicateFiles(filePaths);
+
+    res.json({
+      success: true,
+      deleted: result.deleted.length,
+      failed: result.failed.length,
+      emptyAlbumsRemoved: result.emptyAlbumsRemoved.length,
+      details: result
+    });
+
+  } catch (error) {
+    log(`Delete duplicates error: ${error.message}`, 'ERROR');
+    res.status(500).json({
+      success: false,
+      error: error.message
+    });
+  }
+});
+
+/**
+ * POST /api/radar/replace-tracks
+ * Move tracks to recycle bin (for compilation replacement)
+ */
+app.post('/api/radar/replace-tracks', async (req, res) => {
+  log('=== REPLACE TRACKS REQUEST ===', 'INFO');
+
+  const { serverIp, port, token, trackKeys, artist, compilation } = req.body;
+
+  if (!serverIp || !port || !token || !trackKeys || !Array.isArray(trackKeys)) {
+    return res.status(400).json({
+      success: false,
+      error: 'Missing required parameters'
+    });
+  }
+
+  try {
+    // Normalize server IP (convert plex.local to 127.0.0.1)
+    const normalizedIp = serverIp === 'plex.local' || serverIp === 'localhost' ? '127.0.0.1' : serverIp;
+
+    const plexConfig = {
+      serverIp: normalizedIp,
+      port,
+      token
+    };
+
+    // Fetch file paths for all track keys
+    const { fetchLibraryTracks } = await import('./modules/organizer/plex.js');
+
+    log(`Fetching file paths for ${trackKeys.length} tracks`, 'INFO');
+
+    const filePaths = [];
+    for (const key of trackKeys) {
+      try {
+        // Construct Plex URL for specific track (must include Accept header for JSON)
+        const trackUrl = `http://${normalizedIp}:${port}/library/metadata/${key}?X-Plex-Token=${token}`;
+        log(`Fetching track metadata: ${trackUrl.replace(token, '***')}`, 'DEBUG');
+
+        const response = await fetch(trackUrl, {
+          headers: {
+            'Accept': 'application/json'
+          }
+        });
+
+        if (!response.ok) {
+          log(`Plex returned ${response.status} for track ${key}`, 'ERROR');
+          continue;
+        }
+
+        const data = await response.json();
+        log(`Plex response for ${key}: ${JSON.stringify(data).substring(0, 200)}...`, 'DEBUG');
+
+        if (data.MediaContainer && data.MediaContainer.Metadata && data.MediaContainer.Metadata[0]) {
+          const track = data.MediaContainer.Metadata[0];
+          if (track.Media && track.Media[0] && track.Media[0].Part && track.Media[0].Part[0]) {
+            const filePath = track.Media[0].Part[0].file;
+            filePaths.push(filePath);
+            log(`Found file: ${filePath}`, 'DEBUG');
+          } else {
+            log(`Track ${key} has no Media/Part info: ${JSON.stringify(track.Media)}`, 'WARN');
+          }
+        } else {
+          log(`Track ${key} response missing MediaContainer/Metadata`, 'WARN');
+        }
+      } catch (error) {
+        log(`Error fetching track ${key}: ${error.message}`, 'ERROR');
+      }
+    }
+
+    if (filePaths.length === 0) {
+      return res.status(404).json({
+        success: false,
+        error: 'No file paths found for provided track keys'
+      });
+    }
+
+    log(`Deleting ${filePaths.length} files permanently`, 'INFO');
+
+    // Permanently delete files (user has backups)
+    let deletedCount = 0;
+    const emptyAlbumsRemoved = [];
+
+    for (const filePath of filePaths) {
+      try {
+        // Check if file exists
+        await fs.access(filePath);
+
+        // Delete the file permanently
+        await fs.unlink(filePath);
+        deletedCount++;
+        log(`Deleted: ${filePath}`, 'INFO');
+
+        // Check if parent album folder is now empty
+        const albumFolder = path.dirname(filePath);
+        try {
+          const remainingFiles = await fs.readdir(albumFolder);
+          const audioFiles = remainingFiles.filter(f =>
+            ['.flac', '.mp3', '.m4a', '.aac', '.ogg', '.wav'].includes(path.extname(f).toLowerCase())
+          );
+
+          if (audioFiles.length === 0) {
+            // Remove empty album folder and any remaining non-audio files
+            await fs.rm(albumFolder, { recursive: true });
+            log(`Removed empty album folder: ${albumFolder}`, 'INFO');
+            emptyAlbumsRemoved.push(albumFolder);
+
+            // Check if artist folder is now empty
+            const artistFolder = path.dirname(albumFolder);
+            try {
+              const remainingAlbums = await fs.readdir(artistFolder);
+              if (remainingAlbums.length === 0) {
+                await fs.rm(artistFolder, { recursive: true });
+                log(`Removed empty artist folder: ${artistFolder}`, 'INFO');
+              }
+            } catch (e) {
+              // Artist folder check failed, ignore
+            }
+          }
+        } catch (e) {
+          // Album folder check failed, ignore
+        }
+      } catch (error) {
+        log(`Error deleting file: ${filePath} - ${error.message}`, 'ERROR');
+      }
+    }
+
+    res.json({
+      success: true,
+      movedCount: deletedCount,  // Keep same name for compatibility
+      deletedCount,
+      emptyAlbumsRemoved: emptyAlbumsRemoved.length,
+      totalRequested: trackKeys.length
+    });
+
+  } catch (error) {
+    log(`Replace tracks error: ${error.message}`, 'ERROR');
     res.status(500).json({
       success: false,
       error: error.message

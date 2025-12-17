@@ -86,6 +86,7 @@ function initOrganizer() {
     // Load saved settings
     loadSavedPath();
     loadSavedStagingPath();
+    loadPlexSettings();
 
     // Setup event listeners
     organizerElements.form.addEventListener('submit', handleScanSubmit);
@@ -1172,7 +1173,7 @@ async function handlePlexConnect(e) {
             showConnectionStatus('success', `Connected to ${result.server.name} (${result.server.version})`);
 
             // Fetch libraries
-            await fetchLibraries();
+            await fetchPlexLibraries();
 
             // Auto-scroll to library selection section
             setTimeout(() => {
@@ -1205,10 +1206,21 @@ function showConnectionStatus(type, message) {
 /**
  * Fetch Plex libraries
  */
-async function fetchLibraries() {
-    if (!plexConnectionData) return;
+async function fetchPlexLibraries() {
+    if (!plexConnectionData) {
+        console.error('[Organizer] fetchPlexLibraries() called but plexConnectionData is null');
+        return;
+    }
 
     const { serverIp, port, token } = plexConnectionData;
+
+    console.log('[Organizer] fetchPlexLibraries() - serverIp:', serverIp, 'port:', port, 'token:', token ? '***' : 'undefined');
+
+    if (!serverIp || !port || !token) {
+        console.error('[Organizer] Missing Plex connection data!', { serverIp, port, hasToken: !!token });
+        showConnectionStatus('error', 'Connection data incomplete - please reconnect');
+        return;
+    }
 
     try {
         const response = await fetch('http://localhost:3000/api/plex/libraries', {
@@ -1219,27 +1231,51 @@ async function fetchLibraries() {
 
         const result = await response.json();
 
+        console.log('[Organizer] Library fetch result:', result);
+
         if (result.success && result.libraries.length > 0) {
+            console.log('[Organizer] Calling displayLibraries with', result.libraries.length, 'libraries');
             plexLibraries = result.libraries;
             displayLibraries(result.libraries);
+            console.log('[Organizer] displayLibraries() completed');
         } else {
+            console.log('[Organizer] No libraries found or request failed');
             showConnectionStatus('warning', 'No music libraries found on this Plex server');
         }
     } catch (error) {
+        console.error('[Organizer] Error in fetchPlexLibraries:', error);
         showConnectionStatus('error', `Failed to fetch libraries: ${error.message}`);
     }
 }
 
 /**
  * Display Plex music libraries
+ * CACHE BUSTER: v2.0.1-debug
  */
 function displayLibraries(libraries) {
+    console.log('[Organizer] ===== DISPLAYLIBRARIES V2 CALLED =====');
+    console.log('[Organizer] displayLibraries() called with:', libraries);
+
     const libraryList = document.getElementById('libraryList');
     const plexLibraryPanel = document.getElementById('plexLibraryPanel');
 
+    console.log('[Organizer] DOM elements found:', {
+        libraryList: !!libraryList,
+        plexLibraryPanel: !!plexLibraryPanel
+    });
+
+    if (!libraryList || !plexLibraryPanel) {
+        console.error('[Organizer] Missing DOM elements!', {
+            libraryList,
+            plexLibraryPanel
+        });
+        return;
+    }
+
     libraryList.innerHTML = '';
 
-    libraries.forEach(library => {
+    libraries.forEach((library, index) => {
+        console.log(`[Organizer] Creating card ${index + 1}/${libraries.length}:`, library.name);
         const card = document.createElement('div');
         card.className = 'library-card';
         card.innerHTML = `
@@ -1258,7 +1294,11 @@ function displayLibraries(libraries) {
         libraryList.appendChild(card);
     });
 
+    console.log('[Organizer] About to set plexLibraryPanel.style.display = "block"');
+    console.log('[Organizer] Current display value:', plexLibraryPanel.style.display);
     plexLibraryPanel.style.display = 'block';
+    console.log('[Organizer] New display value:', plexLibraryPanel.style.display);
+    console.log('[Organizer] displayLibraries() finished successfully');
 }
 
 /**
@@ -2106,7 +2146,14 @@ async function handleMatchArtists() {
                         console.log('[Matcher] SSE message type:', data.type);
 
                         if (data.type === 'progress') {
-                            progressText.textContent = `Phase 1: Matching artist "${data.currentArtist || ''}"... (${data.processed}/${data.total})`;
+                            // Check if Claude AI is active
+                            if (data.claudeActive && data.claudeMessage) {
+                                // Show Claude AI indicator with animation
+                                console.log('[Matcher] 🤖 CLAUDE AI ACTIVE:', data.claudeMessage);
+                                progressText.innerHTML = `<span class="claude-ai-indicator">${data.claudeMessage}</span>`;
+                            } else {
+                                progressText.textContent = `Phase 1: Matching artist "${data.currentArtist || ''}"... (${data.processed}/${data.total})`;
+                            }
                             progressBar.style.width = `${data.progress}%`;
                         } else if (data.type === 'complete') {
                             console.log('[Matcher] Phase 1 complete:', data);
@@ -2170,14 +2217,22 @@ function handleRenameArtistFolders() {
     }
 
     // Build list of artist renames (only those that changed)
+    // ALSO include tracks from placeholder folders that need to be moved
+    const PLACEHOLDER_FOLDERS = ['NA', 'Unknown Artist', 'Unknown', 'Various Artists', 'N/A'];
     const renames = [];
     artistMatchResults.forEach(result => {
         const originalArtist = result.originalArtist; // Artist name from metadata
         const folderName = result.folderName || result.originalArtist; // Actual folder name on disk
-        const newArtist = result.mbMatch?.artist || originalArtist;
+        // Use MusicBrainz match first, then AI-parsed primary artist (strips collaborators), then original
+        const newArtist = result.mbMatch?.artist || result.aiParsed?.primary || originalArtist;
+        const isFromPlaceholder = PLACEHOLDER_FOLDERS.includes(folderName);
 
-        // Only include if name changed and accepted
-        if (originalArtist !== newArtist && result.accepted && !result.skipped) {
+        // Include if:
+        // 1. Name changed and accepted, OR
+        // 2. Track is from a placeholder folder and accepted (needs to be moved)
+        const needsProcessing = (originalArtist !== newArtist || isFromPlaceholder) && result.accepted && !result.skipped;
+
+        if (needsProcessing) {
             renames.push({
                 originalArtist,
                 folderName, // CRITICAL: Use actual folder name for rename operation
@@ -2348,21 +2403,43 @@ async function handleRenameAlbumFolders() {
         return;
     }
 
-    // Build list of album renames (only those that changed)
+    // Debug: Log all album results to understand the state
+    console.log('[Matcher] DEBUG: albumMatchResults count:', albumMatchResults.length);
+    albumMatchResults.forEach((result, i) => {
+        console.log(`[Matcher] DEBUG: Album[${i}]: accepted=${result.accepted}, skipped=${result.skipped}, originalAlbum="${result.originalAlbum}", mbMatch=${JSON.stringify(result.mbMatch)}`);
+    });
+
+    // Build list of ALL accepted albums for processing (folder rename + track rename + metadata update)
+    // Include ALL accepted albums, not just those with changed folder names
     const renames = [];
-    albumMatchResults.forEach(result => {
+    albumMatchResults.forEach((result, i) => {
         const originalArtist = result.originalArtist;
         const originalAlbum = result.originalAlbum;
         const folderArtist = result.folderArtist || originalArtist; // Actual artist folder name
         const folderAlbum = result.folderAlbum || originalAlbum; // Actual album folder name
-        const newArtist = result.mbMatch?.artist || originalArtist;
-        const newAlbum = result.mbMatch?.album || originalAlbum;
+        // Use MusicBrainz match first, then AI-parsed primary (strips collaborators), then original
+        const newArtist = result.mbMatch?.artist || result.aiParsed?.primary || originalArtist;
+        const newAlbum = result.mbMatch?.album || result.aiParsedAlbum?.primary || originalAlbum;
 
-        // Only include if album name changed and accepted
+        // Check if names changed (for display purposes)
         const albumChanged = originalAlbum !== newAlbum;
         const artistChanged = originalArtist !== newArtist;
+        const folderChanged = albumChanged || artistChanged;
 
-        if ((albumChanged || artistChanged) && result.accepted && !result.skipped) {
+        // Include ALL albums that are NOT skipped
+        // Albums without MusicBrainz matches will use their original folder names for metadata
+        // The only way to exclude an album is to explicitly Skip it
+        const hasMatch = result.mbMatch || result.manualOverride;
+        const willInclude = !result.skipped; // Include ALL non-skipped albums
+
+        if (!hasMatch && !result.skipped) {
+            console.log(`[Matcher] DEBUG: Album[${i}] "${originalArtist} - ${originalAlbum}": NO MATCH - will use original names for metadata update`);
+        } else {
+            console.log(`[Matcher] DEBUG: Album[${i}] "${originalArtist} - ${originalAlbum}": hasMatch=${hasMatch}, skipped=${result.skipped} => willInclude=${willInclude}`);
+        }
+
+        if (willInclude) {
+            console.log(`[Matcher] DEBUG: Album[${i}] INCLUDED: "${folderArtist}/${folderAlbum}" → "${newArtist}/${newAlbum}" (folderChanged=${folderChanged})`);
             renames.push({
                 originalArtist,
                 originalAlbum,
@@ -2371,16 +2448,21 @@ async function handleRenameAlbumFolders() {
                 newArtist,
                 newAlbum,
                 fileCount: result.fileCount,
-                files: result.files || []
+                files: result.files || [],
+                folderChanged // Track whether folder rename is needed (for display)
             });
         }
     });
 
     if (renames.length === 0) {
-        addScanLog('No album folder renames needed. All albums are correct!', 'info');
+        addScanLog('No albums to process. All albums may have been skipped or have no matches.', 'info');
         document.getElementById('renameAlbumFoldersBtn').style.display = 'none';
         return;
     }
+
+    // Count how many need folder renames vs just metadata updates
+    const folderRenameCount = renames.filter(r => r.folderChanged).length;
+    const metadataOnlyCount = renames.length - folderRenameCount;
 
     // Display rename preview
     const previewList = document.getElementById('albumRenamePreviewList');
@@ -2391,19 +2473,36 @@ async function handleRenameAlbumFolders() {
         const albumChanged = rename.originalAlbum !== rename.newAlbum;
         const showFolderNames = (rename.folderArtist !== rename.originalArtist) || (rename.folderAlbum !== rename.originalAlbum);
 
-        html += `
-            <div class="rename-preview-item" style="padding: 15px; border: 1px solid #333; border-radius: 5px; margin-bottom: 10px; background: #1a1a1a;">
-                <div style="display: flex; align-items: center; gap: 10px; margin-bottom: 8px;">
-                    <div style="flex: 1;">
-                        ${showFolderNames ? `<div style="color: #888; font-size: 12px; margin-bottom: 3px;">Folder: ${rename.folderArtist}/${rename.folderAlbum}</div>` : ''}
-                        <div style="color: #e74c3c; font-size: 14px; margin-bottom: 5px;">❌ ${rename.originalArtist} - ${rename.originalAlbum}</div>
-                        <div style="color: #2ecc71; font-size: 14px;">✅ ${rename.newArtist} - ${rename.newAlbum}</div>
-                        ${artistChanged && albumChanged ? '<div style="color: #f39c12; font-size: 12px; margin-top: 3px;">⚠️ Both artist and album will be updated</div>' : ''}
+        // Different styling for folder rename vs metadata-only
+        if (rename.folderChanged) {
+            // Folder will be renamed
+            html += `
+                <div class="rename-preview-item" style="padding: 15px; border: 1px solid #333; border-radius: 5px; margin-bottom: 10px; background: #1a1a1a;">
+                    <div style="display: flex; align-items: center; gap: 10px; margin-bottom: 8px;">
+                        <div style="flex: 1;">
+                            ${showFolderNames ? `<div style="color: #888; font-size: 12px; margin-bottom: 3px;">Folder: ${rename.folderArtist}/${rename.folderAlbum}</div>` : ''}
+                            <div style="color: #e74c3c; font-size: 14px; margin-bottom: 5px;">❌ ${rename.originalArtist} - ${rename.originalAlbum}</div>
+                            <div style="color: #2ecc71; font-size: 14px;">✅ ${rename.newArtist} - ${rename.newAlbum}</div>
+                            ${artistChanged && albumChanged ? '<div style="color: #f39c12; font-size: 12px; margin-top: 3px;">⚠️ Both artist and album will be updated</div>' : ''}
+                        </div>
+                        <div style="color: #888; font-size: 12px;">${rename.fileCount} files</div>
                     </div>
-                    <div style="color: #888; font-size: 12px;">${rename.fileCount} files</div>
                 </div>
-            </div>
-        `;
+            `;
+        } else {
+            // Metadata-only update (folder name already correct)
+            html += `
+                <div class="rename-preview-item" style="padding: 15px; border: 1px solid #2a4a2a; border-radius: 5px; margin-bottom: 10px; background: #1a2a1a;">
+                    <div style="display: flex; align-items: center; gap: 10px; margin-bottom: 8px;">
+                        <div style="flex: 1;">
+                            <div style="color: #2ecc71; font-size: 14px;">✅ ${rename.newArtist} - ${rename.newAlbum}</div>
+                            <div style="color: #888; font-size: 12px; margin-top: 3px;">📝 Track files & metadata will be updated (folder name correct)</div>
+                        </div>
+                        <div style="color: #888; font-size: 12px;">${rename.fileCount} files</div>
+                    </div>
+                </div>
+            `;
+        }
     });
 
     html += '</div>';
@@ -2415,12 +2514,21 @@ async function handleRenameAlbumFolders() {
     // Store renames for execution
     window.pendingAlbumRenames = renames;
 
-    addScanLog(`Preview ready: ${renames.length} album folder(s) will be renamed`, 'info');
+    // Better summary message
+    let summaryMsg = `Preview ready: ${renames.length} album(s) to process`;
+    if (folderRenameCount > 0 && metadataOnlyCount > 0) {
+        summaryMsg += ` (${folderRenameCount} folder rename(s), ${metadataOnlyCount} metadata-only)`;
+    } else if (folderRenameCount > 0) {
+        summaryMsg += ` (all need folder renames)`;
+    } else {
+        summaryMsg += ` (all metadata-only updates)`;
+    }
+    addScanLog(summaryMsg, 'info');
     scrollToElement('#albumRenamePreviewContainer');
 }
 
 /**
- * Execute album folder renames
+ * Execute album folder renames with SSE progress streaming
  */
 async function handleExecuteAlbumRenames() {
     console.log('[Matcher] Executing album folder renames...');
@@ -2431,41 +2539,127 @@ async function handleExecuteAlbumRenames() {
     }
 
     const renames = window.pendingAlbumRenames;
+    console.log('[Matcher] DEBUG: Executing renames:', JSON.stringify(renames, null, 2));
+
     const executeBtn = document.getElementById('executeAlbumRenamesBtn');
+    const cancelBtn = document.getElementById('cancelAlbumRenamesBtn');
     executeBtn.disabled = true;
-    executeBtn.textContent = 'Renaming...';
+    executeBtn.textContent = 'Processing...';
+    if (cancelBtn) cancelBtn.style.display = 'none';
+
+    // Create/show progress UI in the preview container
+    const previewList = document.getElementById('albumRenamePreviewList');
+    const progressHtml = `
+        <div id="albumRenameProgress" style="padding: 20px; background: #1a1a2e; border-radius: 8px; margin-bottom: 15px;">
+            <div style="display: flex; justify-content: space-between; margin-bottom: 10px;">
+                <span id="renameProgressText" style="color: #e0e0e0; font-weight: bold;">Starting...</span>
+                <span id="renameProgressPercent" style="color: #4ade80;">0%</span>
+            </div>
+            <div style="background: #333; border-radius: 4px; height: 24px; overflow: hidden; margin-bottom: 10px;">
+                <div id="renameProgressBar" style="background: linear-gradient(90deg, #4ade80, #22c55e); height: 100%; width: 0%; transition: width 0.3s ease;"></div>
+            </div>
+            <div id="renameCurrentItem" style="color: #888; font-size: 13px; min-height: 20px;"></div>
+            <div id="renamePhaseInfo" style="color: #64748b; font-size: 12px; margin-top: 5px;"></div>
+        </div>
+    `;
+    previewList.innerHTML = progressHtml;
+
+    const progressText = document.getElementById('renameProgressText');
+    const progressPercent = document.getElementById('renameProgressPercent');
+    const progressBar = document.getElementById('renameProgressBar');
+    const currentItem = document.getElementById('renameCurrentItem');
+    const phaseInfo = document.getElementById('renamePhaseInfo');
 
     try {
         // Get base music path from scanData
         const musicPath = scanData.musicPath || document.getElementById('musicPath').value;
+        console.log('[Matcher] DEBUG: musicPath:', musicPath);
 
+        // Use fetch with SSE response handling
         const response = await fetch('http://localhost:3000/api/organizer/rename-albums', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-                musicPath,
-                renames
-            })
+            body: JSON.stringify({ musicPath, renames })
         });
 
-        const data = await response.json();
+        const reader = response.body.getReader();
+        const decoder = new TextDecoder();
+        let buffer = '';
+        let finalData = null;
 
-        if (data.success) {
-            addScanLog(`✅ Renamed ${data.renamedCount} album folder(s) successfully!`, 'success');
-            if (data.metadataUpdatedCount > 0) {
-                addScanLog(`✅ Updated metadata in ${data.metadataUpdatedCount} files`, 'success');
+        while (true) {
+            const { done, value } = await reader.read();
+            if (done) break;
+
+            buffer += decoder.decode(value, { stream: true });
+
+            // Process complete SSE messages
+            const lines = buffer.split('\n');
+            buffer = lines.pop() || ''; // Keep incomplete line in buffer
+
+            for (const line of lines) {
+                if (line.startsWith('data: ')) {
+                    try {
+                        const data = JSON.parse(line.slice(6));
+                        console.log('[Matcher] SSE Progress:', data);
+
+                        // Update progress UI based on event type
+                        if (data.type === 'start') {
+                            progressText.textContent = data.message;
+                            phaseInfo.textContent = `Processing ${data.totalAlbums} album(s)`;
+                        } else if (data.type === 'album') {
+                            const percent = Math.round((data.current / data.total) * 100);
+                            progressBar.style.width = `${percent}%`;
+                            progressPercent.textContent = `${percent}%`;
+                            progressText.textContent = `Album ${data.current}/${data.total}`;
+                            currentItem.textContent = `${data.artist} - ${data.album}`;
+
+                            // Show phase-specific info
+                            if (data.phase === 'starting') {
+                                phaseInfo.textContent = 'Checking folder...';
+                            } else if (data.phase === 'metadata') {
+                                phaseInfo.textContent = 'Updating artist/album metadata...';
+                            } else if (data.phase === 'tracks') {
+                                phaseInfo.textContent = `Processing ${data.trackCount} track file(s)...`;
+                            }
+                        } else if (data.type === 'complete') {
+                            finalData = data;
+                            progressBar.style.width = '100%';
+                            progressPercent.textContent = '100%';
+                            progressText.textContent = 'Complete!';
+                            currentItem.textContent = '';
+                            phaseInfo.textContent = data.message;
+                        } else if (data.type === 'error') {
+                            finalData = data;
+                            progressBar.style.background = '#ef4444';
+                            progressText.textContent = 'Error!';
+                            phaseInfo.textContent = data.error;
+                        }
+                    } catch (e) {
+                        console.error('[Matcher] SSE parse error:', e);
+                    }
+                }
+            }
+        }
+
+        // Process final result
+        if (finalData && finalData.success) {
+            addScanLog(`✅ Renamed ${finalData.renamedCount} album folder(s) successfully!`, 'success');
+            if (finalData.trackFilesRenamed > 0) {
+                addScanLog(`✅ Renamed ${finalData.trackFilesRenamed} track file(s)`, 'success');
+            }
+            if (finalData.metadataUpdatedCount > 0) {
+                addScanLog(`✅ Updated metadata in ${finalData.metadataUpdatedCount} files`, 'success');
             }
 
             // Update scanData with new paths
             if (scanData && scanData.files) {
                 scanData.files.forEach(file => {
-                    // Match by folder artist/album names
                     const rename = renames.find(r =>
                         r.originalArtist === file.folderArtist &&
                         r.originalAlbum === (file.metadata?.album || file.folderAlbum)
                     );
                     if (rename) {
-                        // Update file paths (with safety checks)
                         if (file.filePath) {
                             file.filePath = file.filePath.replace(
                                 `/${rename.folderArtist}/${rename.folderAlbum}/`,
@@ -2484,10 +2678,8 @@ async function handleExecuteAlbumRenames() {
                                 `${rename.newArtist}/${rename.newAlbum}`
                             );
                         }
-                        // Update folder names
                         file.folderArtist = rename.newArtist;
                         file.folderAlbum = rename.newAlbum;
-                        // Update metadata
                         if (file.metadata) {
                             file.metadata.artist = rename.newArtist;
                             file.metadata.album = rename.newAlbum;
@@ -2496,29 +2688,26 @@ async function handleExecuteAlbumRenames() {
                 });
             }
 
-            // Hide preview container
-            document.getElementById('albumRenamePreviewContainer').style.display = 'none';
+            // Wait a moment to show completion, then hide
+            setTimeout(() => {
+                document.getElementById('albumRenamePreviewContainer').style.display = 'none';
+                document.getElementById('renameAlbumFoldersBtn').style.display = 'none';
 
-            // Hide "Rename Album Folders" button
-            document.getElementById('renameAlbumFoldersBtn').style.display = 'none';
+                addScanLog('✅ Album folders renamed and track metadata updated!', 'success');
 
-            addScanLog('✅ Album folders renamed and track metadata updated!', 'success');
-
-            // Show Move to Live Library section
-            const moveSection = document.getElementById('moveToLibrarySection');
-            if (moveSection) {
-                moveSection.style.display = 'block';
-                initMoveToLibrary(); // Initialize event listeners for Move section
-                addScanLog('📦 Ready to move files to live Plex library - scroll down', 'info');
-                scrollToElement('#moveToLibrarySection');
-
-                // Activate Move section in accordion
-                activateSection('move', 'Files renamed and ready to move to live library');
-            }
-        } else {
-            addScanLog(`Error renaming albums: ${data.error}`, 'error');
-            if (data.errors && data.errors.length > 0) {
-                data.errors.forEach(err => addScanLog(`  - ${err}`, 'error'));
+                const moveSection = document.getElementById('moveToLibrarySection');
+                if (moveSection) {
+                    moveSection.style.display = 'block';
+                    initMoveToLibrary();
+                    addScanLog('📦 Ready to move files to live Plex library - scroll down', 'info');
+                    scrollToElement('#moveToLibrarySection');
+                    activateSection('move', 'Files renamed and ready to move to live library');
+                }
+            }, 1500);
+        } else if (finalData) {
+            addScanLog(`Error renaming albums: ${finalData.error}`, 'error');
+            if (finalData.errors && finalData.errors.length > 0) {
+                finalData.errors.forEach(err => addScanLog(`  - ${err}`, 'error'));
             }
         }
     } catch (error) {
@@ -2526,7 +2715,8 @@ async function handleExecuteAlbumRenames() {
         addScanLog(`Error renaming albums: ${error.message}`, 'error');
     } finally {
         executeBtn.disabled = false;
-        executeBtn.textContent = '✅ Execute Album Renames';
+        executeBtn.textContent = '✅ Execute All Updates';
+        if (cancelBtn) cancelBtn.style.display = 'inline-block';
     }
 }
 
@@ -2674,9 +2864,20 @@ function displayArtistMatchResults(results, filter = 'all') {
             `<span class="format-badge" style="background-color: ${getConfidenceBadgeColor(result.confidence)};">${result.confidence}% match</span>` : '';
 
         const mbMatch = result.mbMatch;
-        const matchInfo = mbMatch ?
-            `<strong>MusicBrainz Match:</strong> ${mbMatch.artist || result.originalArtist || 'Unknown'}` :
-            `<strong>Status:</strong> No match found`;
+        const aiParsedPrimary = result.aiParsed?.primary;
+        const hasCollaborators = result.aiParsed?.featured?.length > 0;
+        const collaboratorsExtracted = hasCollaborators && aiParsedPrimary !== result.originalArtist;
+
+        // Show collaboration extraction info when relevant
+        let matchInfo;
+        if (collaboratorsExtracted) {
+            // Collaboration was detected and primary artist extracted
+            matchInfo = `<strong>Primary Artist:</strong> ${mbMatch?.artist || aiParsedPrimary} <span style="color: #f39c12; font-size: 12px;">⚡ extracted from collaboration</span>`;
+        } else if (mbMatch) {
+            matchInfo = `<strong>MusicBrainz Match:</strong> ${mbMatch.artist || result.originalArtist || 'Unknown'}`;
+        } else {
+            matchInfo = `<strong>Status:</strong> No match found`;
+        }
 
         // Determine if action buttons are needed (hide if already accepted/skipped/manually overridden)
         const needsAction = (category === 'review' || category === 'manual') && !result.accepted && !result.skipped && !result.manualOverride;
@@ -2685,6 +2886,7 @@ function displayArtistMatchResults(results, filter = 'all') {
                 ${category === 'review' ? `<button class="action-btn accept-btn" data-phase="artist" data-index="${filteredResults.indexOf(result)}" title="Accept this match">✅ Accept</button>` : ''}
                 <button class="action-btn search-btn" data-phase="artist" data-index="${filteredResults.indexOf(result)}" title="Search for a different match">🔍 Search</button>
                 <button class="action-btn edit-btn" data-phase="artist" data-index="${filteredResults.indexOf(result)}" title="Manually edit metadata">✏️ Edit</button>
+                <button class="action-btn ask-claude-btn" data-phase="artist" data-index="${filteredResults.indexOf(result)}" title="Ask Claude AI for help">🤖 Ask Claude</button>
                 <button class="action-btn skip-btn" data-phase="artist" data-index="${filteredResults.indexOf(result)}" title="Skip this artist">⏭️ Skip</button>
             </div>
         ` : '';
@@ -2758,6 +2960,14 @@ function attachArtistMatchActionListeners() {
             const result = artistMatchResults[index];
             console.log('[Matcher] Edit artist:', result.originalArtist);
             openArtistEditModal(result, index);
+        }
+
+        // Ask Claude button
+        else if (target.classList.contains('ask-claude-btn') && target.dataset.phase === 'artist') {
+            const index = parseInt(target.dataset.index);
+            const result = artistMatchResults[index];
+            console.log('[Matcher] Ask Claude about artist:', result.originalArtist);
+            openAskClaudeModal('artist', result, index);
         }
 
         // Skip button
@@ -2984,6 +3194,14 @@ function attachAlbumMatchActionListeners() {
             openAlbumEditModal(result, index);
         }
 
+        // Ask Claude button
+        else if (target.classList.contains('ask-claude-btn') && target.dataset.phase === 'album') {
+            const index = parseInt(target.dataset.index);
+            const result = albumMatchResults[index];
+            console.log('[Matcher] Ask Claude about album:', result.originalAlbum);
+            openAskClaudeModal('album', result, index);
+        }
+
         // Skip button
         else if (target.classList.contains('skip-btn') && target.dataset.phase === 'album') {
             const index = parseInt(target.dataset.index);
@@ -3207,6 +3425,7 @@ function displayAlbumMatchResults(results, filter = 'all') {
                 ${category === 'review' ? `<button class="action-btn accept-btn" data-phase="album" data-index="${filteredResults.indexOf(result)}" title="Accept this match">✅ Accept</button>` : ''}
                 <button class="action-btn search-btn" data-phase="album" data-index="${filteredResults.indexOf(result)}" title="Search for a different match">🔍 Search</button>
                 <button class="action-btn edit-btn" data-phase="album" data-index="${filteredResults.indexOf(result)}" title="Manually edit metadata">✏️ Edit</button>
+                <button class="action-btn ask-claude-btn" data-phase="album" data-index="${filteredResults.indexOf(result)}" title="Ask Claude AI for help">🤖 Ask Claude</button>
                 <button class="action-btn skip-btn" data-phase="album" data-index="${filteredResults.indexOf(result)}" title="Skip this album">⏭️ Skip</button>
             </div>
         ` : '';
@@ -4734,6 +4953,208 @@ function resetMoveSection() {
     document.getElementById('pathValidationStatus').style.display = 'none';
     addScanLog('Move section reset', 'info');
 }
+
+/**
+ * Open Ask Claude modal for custom queries
+ */
+function openAskClaudeModal(entityType, result, index) {
+    console.log(`[Organizer] Opening Ask Claude modal for ${entityType}:`, result);
+
+    const modal = document.getElementById('askClaudeModal');
+    const contextDiv = document.getElementById('askClaudeContext');
+    const promptTextarea = document.getElementById('askClaudePrompt');
+    const responseDiv = document.getElementById('askClaudeResponse');
+    const submitBtn = document.getElementById('submitClaudeBtn');
+
+    // Reset modal state
+    promptTextarea.value = '';
+    responseDiv.style.display = 'none';
+    responseDiv.innerHTML = '';
+
+    // Build context based on entity type
+    let contextHTML = '';
+    if (entityType === 'artist') {
+        contextHTML = `
+            <h4>Artist Context</h4>
+            <p><strong>Original Name:</strong> ${result.originalArtist}</p>
+            <p><strong>Sample Tracks:</strong></p>
+            <ul>
+                ${result.files.slice(0, 5).map(f => `<li>${f.metadata?.title || f.fileName}</li>`).join('')}
+                ${result.files.length > 5 ? `<li><em>...and ${result.files.length - 5} more tracks</em></li>` : ''}
+            </ul>
+        `;
+    } else if (entityType === 'album') {
+        const files = result.files || [];
+        contextHTML = `
+            <h4>Album Context</h4>
+            <p><strong>Artist:</strong> ${result.correctedArtist || result.artist || result.originalArtist}</p>
+            <p><strong>Original Album:</strong> ${result.originalAlbum}</p>
+            ${files.length > 0 ? `
+                <p><strong>Tracks:</strong></p>
+                <ul>
+                    ${files.slice(0, 10).map(f => `<li>${f.metadata?.title || f.fileName}</li>`).join('')}
+                    ${files.length > 10 ? `<li><em>...and ${files.length - 10} more tracks</em></li>` : ''}
+                </ul>
+            ` : `<p><strong>Files:</strong> ${result.fileCount || 'Unknown'}</p>`}
+        `;
+    }
+
+    contextDiv.innerHTML = contextHTML;
+
+    // Handle submit button click
+    submitBtn.onclick = async () => {
+        const userPrompt = promptTextarea.value.trim();
+        if (!userPrompt) {
+            alert('Please enter a question for Claude');
+            return;
+        }
+
+        console.log('[Organizer] Submitting Claude query:', userPrompt);
+        submitBtn.disabled = true;
+        submitBtn.textContent = 'Asking Claude...';
+
+        try {
+            const response = await fetch('/api/organizer/ask-claude', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    entityType,
+                    entityName: entityType === 'artist' ? result.originalArtist : result.originalAlbum,
+                    userPrompt,
+                    files: (result.files || []).map(f => ({
+                        fileName: f.fileName,
+                        filePath: f.filePath,
+                        metadata: f.metadata
+                    }))
+                })
+            });
+
+            const data = await response.json();
+
+            if (data.success) {
+                console.log('[Organizer] Claude response:', data.result);
+
+                // Determine confidence level class
+                let confidenceClass = 'confidence-low';
+                if (data.result.confidence >= 80) confidenceClass = 'confidence-high';
+                else if (data.result.confidence >= 60) confidenceClass = 'confidence-medium';
+
+                // Display response
+                responseDiv.innerHTML = `
+                    <h4>Claude's Analysis</h4>
+
+                    <div class="response-section">
+                        <label>Suggested ${entityType === 'artist' ? 'Artist' : 'Album'} Name</label>
+                        <div class="value suggested-name">
+                            ${data.result.suggested}
+                            <span class="confidence-badge ${confidenceClass}">${data.result.confidence}% Confidence</span>
+                        </div>
+                    </div>
+
+                    <div class="response-section">
+                        <label>Analysis</label>
+                        <div class="value">${data.result.analysis}</div>
+                    </div>
+
+                    ${data.result.albumType ? `
+                        <div class="response-section">
+                            <label>Album Type</label>
+                            <div class="value">${data.result.albumType}</div>
+                        </div>
+                    ` : ''}
+
+                    ${data.result.suggested ? `
+                        <div class="button-group" style="margin-top: 15px;">
+                            <button type="button" class="button-primary" onclick="applyClaudeSuggestion('${entityType}', ${index}, '${data.result.suggested.replace(/'/g, "\\'")}')">
+                                Apply Suggestion: "${data.result.suggested}"
+                            </button>
+                        </div>
+                    ` : `
+                        <div class="response-section" style="margin-top: 15px; color: #888;">
+                            <em>No specific suggestion available - Claude needs more information or couldn't identify this ${entityType}.</em>
+                        </div>
+                    `}
+                `;
+                responseDiv.style.display = 'block';
+            } else {
+                responseDiv.innerHTML = `
+                    <div class="response-section">
+                        <label style="color: #d32f2f;">Error</label>
+                        <div class="value">${data.error || 'Unknown error occurred'}</div>
+                    </div>
+                `;
+                responseDiv.style.display = 'block';
+            }
+        } catch (error) {
+            console.error('[Organizer] Ask Claude error:', error);
+            responseDiv.innerHTML = `
+                <div class="response-section">
+                    <label style="color: #d32f2f;">Error</label>
+                    <div class="value">Failed to communicate with Claude: ${error.message}</div>
+                </div>
+            `;
+            responseDiv.style.display = 'block';
+        } finally {
+            submitBtn.disabled = false;
+            submitBtn.textContent = 'Ask Claude';
+        }
+    };
+
+    // Show modal
+    modal.style.display = 'block';
+}
+
+/**
+ * Apply Claude's suggested name to the result
+ */
+window.applyClaudeSuggestion = function(entityType, index, suggestedName) {
+    console.log(`[Organizer] Applying Claude suggestion for ${entityType}[${index}]: ${suggestedName}`);
+
+    if (entityType === 'artist') {
+        const result = artistMatchResults[index];
+        if (!result) {
+            console.error(`[Organizer] Artist result not found at index ${index}`);
+            return;
+        }
+        // Update the mbMatch with the Claude suggestion
+        result.mbMatch = {
+            artist: suggestedName,
+            mbid: null,
+            sortName: suggestedName,
+            disambiguation: null
+        };
+        result.matchSource = 'claude-custom';
+        result.confidence = 100; // User approved
+        result.category = 'auto_approve';
+        result.accepted = true; // CRITICAL: Mark as accepted so it gets included in renames
+        result.manualOverride = true; // Mark as manually overridden
+        result.skipped = false;
+        displayArtistMatchResults(artistMatchResults, currentMatchFilter || 'all');
+        addScanLog(`Applied Claude suggestion for artist: ${result.originalArtist} → ${suggestedName}`, 'success');
+    } else if (entityType === 'album') {
+        const result = albumMatchResults[index];
+        if (!result) {
+            console.error(`[Organizer] Album result not found at index ${index}`);
+            return;
+        }
+        result.mbMatch = {
+            album: suggestedName,
+            artist: result.correctedArtist || result.originalArtist, // Preserve artist
+            mbid: null
+        };
+        result.matchSource = 'claude-custom';
+        result.confidence = 100; // User approved
+        result.category = 'auto_approve';
+        result.accepted = true; // CRITICAL: Mark as accepted so it gets included in renames
+        result.manualOverride = true; // Mark as manually overridden
+        result.skipped = false;
+        displayAlbumMatchResults(albumMatchResults, currentMatchFilter || 'all');
+        addScanLog(`Applied Claude suggestion for album: ${result.originalAlbum} → ${suggestedName}`, 'success');
+    }
+
+    // Close modal
+    document.getElementById('askClaudeModal').style.display = 'none';
+};
 
 // Register the organizer route
 router.register('organizer', initOrganizer);

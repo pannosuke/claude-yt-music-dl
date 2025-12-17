@@ -287,7 +287,15 @@ async function handleDownloadSubmit(e) {
 
             for (const line of lines) {
                 if (line.startsWith('data: ')) {
-                    const data = JSON.parse(line.slice(6));
+                    let data;
+                    try {
+                        data = JSON.parse(line.slice(6));
+                    } catch (parseError) {
+                        // SSE data was corrupted (network error, partial message, etc.)
+                        addLog(`[Warning] Received malformed SSE data, continuing...`, 'warning');
+                        console.warn('[Downloader] JSON parse error:', parseError.message, 'Raw data:', line.slice(6));
+                        continue; // Skip this malformed message and continue processing
+                    }
 
                     // Store download ID
                     if (data.downloadId && !currentDownloadId) {

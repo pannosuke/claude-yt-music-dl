@@ -5,7 +5,8 @@
 
 import { searchRecording, searchRelease, searchArtist } from './musicbrainz.js';
 import { isRomaji, generateJapaneseSearchVariants } from './romaji-converter.js';
-import { parseArtistWithAI, parseAlbumWithAI, parseTrackWithAI, isClaudeCLIAvailable } from './ai-engine.js';
+import { parseArtistWithAI, parseAlbumWithAI, parseTrackWithAI, isClaudeCLIAvailable, matchArtistWithAI, matchAlbumWithAI } from './ai-engine.js';
+import { updateTrackMetadata } from './metadata-updater.js';
 import path from 'path';
 import fs from 'fs/promises';
 import { existsSync } from 'fs';
@@ -543,7 +544,16 @@ export function generateRenamePath(matchResult, basePath) {
         artist: artistSafe,
         album: albumFolder,
         filename: newFilename,
-        changed: actualFilePath !== newPath
+        changed: actualFilePath !== newPath,
+        // Include metadata for updating file tags
+        metadata: {
+            artist: artist,      // Raw artist name (not sanitized)
+            albumArtist: artist, // Album artist = same as artist for tracks
+            album: album,        // Raw album name
+            title: title,        // Raw title
+            year: year || null,
+            trackNumber: trackNum || null
+        }
     };
 }
 
@@ -710,22 +720,48 @@ export async function executeRename(renameItems, dryRun = true, cleanupEmptyDirs
 
                     // Rename with new path
                     await fs.rename(originalPath, newProposedPath);
+
+                    // Update metadata in the renamed file
+                    let metadataUpdated = false;
+                    if (renamePreview.metadata) {
+                        try {
+                            await updateTrackMetadata(newProposedPath, renamePreview.metadata);
+                            metadataUpdated = true;
+                        } catch (metaError) {
+                            console.warn(`[Matcher] Failed to update metadata for ${newProposedPath}: ${metaError.message}`);
+                        }
+                    }
+
                     results.push({
                         originalPath,
                         proposedPath: newProposedPath,
                         status: 'success_with_suffix',
-                        message: `Renamed successfully (added suffix to avoid conflict)`,
-                        dryRun: false
+                        message: `Renamed successfully (added suffix to avoid conflict)${metadataUpdated ? ' + metadata updated' : ''}`,
+                        dryRun: false,
+                        metadataUpdated
                     });
                 } else {
                     // Rename normally
                     await fs.rename(originalPath, proposedPath);
+
+                    // Update metadata in the renamed file
+                    let metadataUpdated = false;
+                    if (renamePreview.metadata) {
+                        try {
+                            await updateTrackMetadata(proposedPath, renamePreview.metadata);
+                            metadataUpdated = true;
+                        } catch (metaError) {
+                            console.warn(`[Matcher] Failed to update metadata for ${proposedPath}: ${metaError.message}`);
+                        }
+                    }
+
                     results.push({
                         originalPath,
                         proposedPath,
                         status: 'success',
-                        message: 'Renamed successfully',
-                        dryRun: false
+                        message: `Renamed successfully${metadataUpdated ? ' + metadata updated' : ''}`,
+                        dryRun: false,
+                        metadataUpdated
                     });
                 }
             }
@@ -927,9 +963,14 @@ export async function matchArtists(files, progressCallback = null) {
 
             try {
                 aiParsed = await parseArtistWithAI(artist);
+                console.log(`[Matcher] AI parse result for "${artist}":`, JSON.stringify(aiParsed));
                 if (aiParsed && aiParsed.primary && aiParsed.primary !== artist) {
                     searchQuery = aiParsed.primary;
                     console.log(`[Matcher] AI parsed collaboration: "${artist}" → primary: "${searchQuery}", featured: [${aiParsed.featured.join(', ')}]`);
+                } else if (aiParsed && aiParsed.featured && aiParsed.featured.length > 0) {
+                    // Even if primary equals original (shouldn't happen), if featured artists exist, use primary
+                    searchQuery = aiParsed.primary;
+                    console.log(`[Matcher] AI found featured artists: "${artist}" → primary: "${searchQuery}", featured: [${aiParsed.featured.join(', ')}]`);
                 }
             } catch (error) {
                 console.warn(`[Matcher] AI parsing failed, using original artist name: ${error.message}`);
@@ -971,6 +1012,69 @@ export async function matchArtists(files, progressCallback = null) {
                 }
             }
 
+            // AI FALLBACK: If MusicBrainz found no match, try AI matching
+            let aiMatch = null;
+            if (!bestMatch || bestMatch.confidence < CONFIDENCE_THRESHOLDS.REVIEW) {
+                console.log(`[Matcher] MusicBrainz match too low or missing for artist "${artist}", trying AI fallback...`);
+
+                // Notify frontend that Claude AI is being invoked
+                if (progressCallback) {
+                    progressCallback({
+                        currentArtist: artist,
+                        processed: processedCount,
+                        total: totalArtists,
+                        progress: Math.round((processedCount / totalArtists) * 100),
+                        claudeActive: true,
+                        claudeMessage: `🤖 Claude AI analyzing "${artist}"...`
+                    });
+                }
+
+                try {
+                    aiMatch = await matchArtistWithAI(artist, artistData.files);
+
+                    if (aiMatch.isValid && aiMatch.confidence >= 60) {
+                        // AI confirmed or corrected the artist name
+                        const nameChanged = aiMatch.suggested !== artist;
+
+                        if (nameChanged) {
+                            console.log(`[Matcher] AI suggested correction: "${artist}" → "${aiMatch.suggested}" (${aiMatch.confidence}% confidence)`);
+                        } else {
+                            console.log(`[Matcher] AI confirmed artist: "${artist}" (${aiMatch.confidence}% confidence)`);
+                        }
+
+                        // Retry MusicBrainz with AI-suggested/confirmed name
+                        const aiResults = await searchArtist(aiMatch.suggested, { limit: 1 });
+                        const aiMbMatch = aiResults && aiResults.length > 0 ? aiResults[0] : null;
+
+                        // Determine best result: use higher of AI confidence or MusicBrainz confidence
+                        const currentBestConf = bestMatch ? bestMatch.confidence : 0;
+                        const mbConf = aiMbMatch ? aiMbMatch.confidence : 0;
+                        const aiConf = aiMatch.confidence;
+
+                        if (aiMbMatch && mbConf > currentBestConf && mbConf >= aiConf) {
+                            // MusicBrainz returned a good match with AI-suggested name
+                            bestMatch = aiMbMatch;
+                            searchMethod = 'ai_fallback';
+                            console.log(`[Matcher] AI fallback successful: Found "${aiMbMatch.artist}" with ${mbConf}% confidence`);
+                        } else if (aiConf >= 80 && aiConf > currentBestConf) {
+                            // AI is more confident than both current best and MusicBrainz result
+                            // Create a virtual match using AI's confidence
+                            bestMatch = {
+                                artist: aiMatch.suggested,
+                                id: aiMbMatch ? aiMbMatch.id : null, // Use MBID if available
+                                sortName: aiMbMatch ? aiMbMatch.sortName : aiMatch.suggested,
+                                disambiguation: aiMbMatch ? aiMbMatch.disambiguation : null,
+                                confidence: aiConf // Use AI confidence, not MusicBrainz confidence
+                            };
+                            searchMethod = aiMbMatch ? 'ai_boosted' : 'ai_only';
+                            console.log(`[Matcher] AI ${searchMethod} match: "${aiMatch.suggested}" (${aiConf}% AI confidence${aiMbMatch ? `, ${mbConf}% MB confidence` : ''})`);
+                        }
+                    }
+                } catch (error) {
+                    console.warn(`[Matcher] AI fallback failed for artist "${artist}": ${error.message}`);
+                }
+            }
+
             // Categorize based on confidence
             let category = 'manual';
             let status = 'matched';
@@ -988,19 +1092,41 @@ export async function matchArtists(files, progressCallback = null) {
                 category = 'manual';
             }
 
+            // Determine the final artist name to use:
+            // If AI parsing detected collaborators (featured artists found), use primary artist
+            // This ensures "Icon For Hire, Ariel Jump, ..." becomes just "Icon For Hire"
+            const hasParsedCollaborators = aiParsed?.featured && aiParsed.featured.length > 0;
+            const primaryIsDifferent = hasParsedCollaborators && aiParsed.primary && aiParsed.primary.trim().toLowerCase() !== artist.trim().toLowerCase();
+            const finalArtist = hasParsedCollaborators ? aiParsed.primary : (bestMatch?.artist || artist);
+
+            console.log(`[Matcher] Collaboration check for "${artist}": hasParsedCollaborators=${hasParsedCollaborators}, primaryIsDifferent=${primaryIsDifferent}, finalArtist="${finalArtist}"`);
+
+            if (hasParsedCollaborators) {
+                console.log(`[Matcher] Collaboration detected: "${artist}" → using primary: "${aiParsed.primary}" (featured: ${aiParsed.featured.join(', ')})`);
+            }
+
             results.push({
                 originalArtist: artist,
                 folderName: artistData.folderName, // Actual folder name on disk
                 mbMatch: bestMatch ? {
-                    artist: bestMatch.artist,
+                    artist: finalArtist, // Use primary artist if collaborators detected
                     mbid: bestMatch.id,
                     sortName: bestMatch.sortName,
-                    disambiguation: bestMatch.disambiguation
-                } : null,
-                confidence: bestMatch ? bestMatch.confidence : 0,
-                category,
+                    disambiguation: bestMatch.disambiguation,
+                    originalMbArtist: bestMatch.artist // Keep original MB match for reference
+                } : (hasParsedCollaborators ? {
+                    // Create a pseudo-match from AI parsing when collaborators detected
+                    artist: aiParsed.primary,
+                    mbid: null,
+                    sortName: null,
+                    disambiguation: `Extracted from: ${artist}`
+                } : null),
+                confidence: bestMatch ? bestMatch.confidence : (hasParsedCollaborators ? 85 : 0), // Give AI-parsed a decent confidence
+                category: hasParsedCollaborators && !bestMatch ? 'review' : category, // Put AI-parsed in review if no MB match
                 status,
-                searchMethod,
+                searchMethod: hasParsedCollaborators ? 'ai_collaboration_parsed' : searchMethod,
+                aiSuggestion: aiMatch, // Include AI analysis for frontend display
+                aiParsed: aiParsed, // Include AI-parsed primary/featured artists for folder naming
                 fileCount: artistData.fileCount,
                 files: artistData.files, // Include file list for rename operation
                 accepted: category === 'auto_approve', // Auto-accept high confidence
@@ -1062,15 +1188,26 @@ export async function matchAlbums(files, artistMatches, progressCallback = null)
 
     for (const artistMatch of artistMatches) {
         // Track skipped artists
-        if (artistMatch.skipped || !artistMatch.mbMatch) {
+        if (artistMatch.skipped) {
             skippedArtists.add(artistMatch.originalArtist.toLowerCase());
             continue;
         }
 
-        // Use accepted artist name (either from MusicBrainz or manual override)
-        const correctedArtist = artistMatch.manualOverride
-            ? artistMatch.mbMatch.artist
-            : (artistMatch.accepted ? artistMatch.mbMatch.artist : artistMatch.originalArtist);
+        // Determine the corrected artist name:
+        // Priority: mbMatch > aiParsed.primary > originalArtist
+        let correctedArtist;
+        if (artistMatch.mbMatch) {
+            // Use MusicBrainz match (whether auto-approved, reviewed, or manually selected)
+            correctedArtist = artistMatch.mbMatch.artist;
+        } else if (artistMatch.aiParsed?.primary && artistMatch.aiParsed.primary !== artistMatch.originalArtist) {
+            // Use AI-parsed primary artist (strips out featured/collaborators)
+            correctedArtist = artistMatch.aiParsed.primary;
+            console.log(`[Matcher] Phase 2: Using AI-parsed primary artist: "${artistMatch.originalArtist}" → "${correctedArtist}"`);
+        } else {
+            // No match - use original artist name (don't skip, still process albums)
+            correctedArtist = artistMatch.originalArtist;
+            console.log(`[Matcher] Phase 2: No match for artist "${artistMatch.originalArtist}" - using original name`);
+        }
 
         artistLookup.set(artistMatch.originalArtist.toLowerCase(), correctedArtist);
     }
@@ -1102,6 +1239,8 @@ export async function matchAlbums(files, artistMatches, progressCallback = null)
                 artist,
                 originalArtist,
                 album,
+                folderArtist: file.folderArtist, // Actual artist folder name on disk
+                folderAlbum: file.folderAlbum, // Actual album folder name on disk
                 fileCount: 0,
                 files: []
             });
@@ -1174,6 +1313,69 @@ export async function matchAlbums(files, artistMatches, progressCallback = null)
                 }
             }
 
+            // AI FALLBACK: If MusicBrainz found no match, try AI matching
+            let aiMatch = null;
+            if (!bestMatch || bestMatch.confidence < CONFIDENCE_THRESHOLDS.REVIEW) {
+                console.log(`[Matcher] MusicBrainz match too low or missing for album "${artist} - ${album}", trying AI fallback...`);
+
+                // Update progress to show Claude is analyzing
+                if (progressCallback) {
+                    progressCallback({
+                        currentAlbum: `${artist} - ${album}`,
+                        processed: processedCount,
+                        total: totalAlbums,
+                        progress: Math.round((processedCount / totalAlbums) * 100),
+                        claudeActive: true,
+                        claudeMessage: `🤖 Claude AI analyzing album "${album}"...`
+                    });
+                }
+
+                try {
+                    aiMatch = await matchAlbumWithAI(artist, album, albumData.files);
+
+                    if (aiMatch.isValid && aiMatch.confidence >= 60) {
+                        // AI confirmed or corrected the album name
+                        const nameChanged = aiMatch.suggested !== album;
+
+                        if (nameChanged) {
+                            console.log(`[Matcher] AI suggested album correction: "${album}" → "${aiMatch.suggested}" (${aiMatch.confidence}% confidence)`);
+                        } else {
+                            console.log(`[Matcher] AI confirmed album: "${album}" (${aiMatch.confidence}% confidence)`);
+                        }
+
+                        // Retry MusicBrainz with AI-suggested/confirmed album name
+                        const aiResults = await searchRelease(artist, aiMatch.suggested, { limit: 1 });
+                        const aiMbMatch = aiResults && aiResults.length > 0 ? aiResults[0] : null;
+
+                        // Determine best result: use higher of AI confidence or MusicBrainz confidence
+                        const currentBestConf = bestMatch ? bestMatch.confidence : 0;
+                        const mbConf = aiMbMatch ? aiMbMatch.confidence : 0;
+                        const aiConf = aiMatch.confidence;
+
+                        if (aiMbMatch && mbConf > currentBestConf && mbConf >= aiConf) {
+                            // MusicBrainz returned a good match with AI-suggested album name
+                            bestMatch = aiMbMatch;
+                            searchMethod = 'ai_fallback';
+                            console.log(`[Matcher] AI album fallback successful: Found "${aiMbMatch.title}" with ${mbConf}% confidence`);
+                        } else if (aiConf >= 80 && aiConf > currentBestConf) {
+                            // AI is more confident than both current best and MusicBrainz result
+                            // Create a virtual match using AI's confidence
+                            bestMatch = {
+                                artist: artist,
+                                title: aiMatch.suggested,
+                                year: aiMbMatch ? aiMbMatch.year : null,
+                                id: aiMbMatch ? aiMbMatch.id : null, // Use MBID if available
+                                confidence: aiConf // Use AI confidence, not MusicBrainz confidence
+                            };
+                            searchMethod = aiMbMatch ? 'ai_boosted' : 'ai_only';
+                            console.log(`[Matcher] AI ${searchMethod} album match: "${aiMatch.suggested}" (${aiConf}% AI confidence${aiMbMatch ? `, ${mbConf}% MB confidence` : ''})`);
+                        }
+                    }
+                } catch (error) {
+                    console.warn(`[Matcher] AI album fallback failed for "${artist} - ${album}": ${error.message}`);
+                }
+            }
+
             // Categorize based on confidence
             let category = 'manual';
             let status = 'matched';
@@ -1195,6 +1397,8 @@ export async function matchAlbums(files, artistMatches, progressCallback = null)
                 originalArtist,
                 correctedArtist: artist,
                 originalAlbum: album,
+                folderArtist: albumData.folderArtist, // Actual artist folder name on disk
+                folderAlbum: albumData.folderAlbum, // Actual album folder name on disk
                 mbMatch: bestMatch ? {
                     artist: bestMatch.artist,
                     album: bestMatch.title,
@@ -1205,7 +1409,10 @@ export async function matchAlbums(files, artistMatches, progressCallback = null)
                 category,
                 status,
                 searchMethod,
+                aiSuggestion: aiMatch, // Include AI analysis for frontend display
+                aiParsedAlbum: albumAiParsed, // Include AI-parsed primary album for folder naming
                 fileCount: albumData.fileCount,
+                files: albumData.files, // Include files for Ask Claude and rename operations
                 accepted: category === 'auto_approve',
                 skipped: false,
                 manualOverride: false
@@ -1219,12 +1426,15 @@ export async function matchAlbums(files, artistMatches, progressCallback = null)
                 originalArtist: albumData.originalArtist,
                 correctedArtist: albumData.artist,
                 originalAlbum: albumData.album,
+                folderArtist: albumData.folderArtist, // Actual artist folder name on disk
+                folderAlbum: albumData.folderAlbum, // Actual album folder name on disk
                 mbMatch: null,
                 confidence: 0,
                 category: 'manual',
                 status: 'error',
                 error: error.message,
                 fileCount: albumData.fileCount,
+                files: albumData.files, // Include files for Ask Claude and rename operations
                 accepted: false,
                 skipped: false,
                 manualOverride: false
@@ -1265,14 +1475,32 @@ export async function matchTracks(files, artistMatches, albumMatches, progressCa
     const skippedArtists = new Set();
 
     for (const artistMatch of artistMatches) {
-        if (artistMatch.skipped || !artistMatch.mbMatch) {
+        if (artistMatch.skipped) {
             skippedArtists.add(artistMatch.originalArtist.toLowerCase());
             continue;
         }
 
-        const correctedArtist = artistMatch.manualOverride
-            ? artistMatch.mbMatch.artist
-            : (artistMatch.accepted ? artistMatch.mbMatch.artist : artistMatch.originalArtist);
+        // Determine the corrected artist name:
+        // 1. If manual override with mbMatch, use mbMatch.artist
+        // 2. If accepted with mbMatch, use mbMatch.artist
+        // 3. If AI-parsed primary artist exists, use that (strips collaborators)
+        // 4. Fallback to original artist
+        let correctedArtist;
+        if (artistMatch.manualOverride && artistMatch.mbMatch) {
+            correctedArtist = artistMatch.mbMatch.artist;
+        } else if (artistMatch.accepted && artistMatch.mbMatch) {
+            correctedArtist = artistMatch.mbMatch.artist;
+        } else if (artistMatch.aiParsed?.primary && artistMatch.aiParsed.primary !== artistMatch.originalArtist) {
+            // Use AI-parsed primary artist (strips out featured/collaborators)
+            correctedArtist = artistMatch.aiParsed.primary;
+            console.log(`[Matcher] Using AI-parsed primary artist: "${artistMatch.originalArtist}" → "${correctedArtist}"`);
+        } else if (artistMatch.mbMatch) {
+            correctedArtist = artistMatch.mbMatch.artist;
+        } else {
+            // No match and no AI parsing - skip this artist
+            skippedArtists.add(artistMatch.originalArtist.toLowerCase());
+            continue;
+        }
 
         artistLookup.set(artistMatch.originalArtist.toLowerCase(), correctedArtist);
     }

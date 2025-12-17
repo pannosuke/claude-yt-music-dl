@@ -14,6 +14,8 @@
     <link rel="stylesheet" href="/css/downloader.css">
     <link rel="stylesheet" href="/css/organizer.css">
     <link rel="stylesheet" href="/css/upgrader.css">
+    <link rel="stylesheet" href="/css/radar.css">
+    <link rel="stylesheet" href="/css/simple-organizer.css">
 </head>
 <body>
     <div class="app-container">
@@ -30,6 +32,14 @@
             <button class="tab-button" data-route="upgrader" onclick="router.navigate('upgrader')">
                 <span class="tab-icon">🎵</span>
                 <span class="tab-label">Quality Upgrader</span>
+            </button>
+            <button class="tab-button" data-route="radar" onclick="router.navigate('radar')">
+                <span class="tab-icon">📡</span>
+                <span class="tab-label">Artist Radar</span>
+            </button>
+            <button class="tab-button" data-route="simple-organizer" onclick="router.navigate('simple-organizer')">
+                <span class="tab-icon">🗂️</span>
+                <span class="tab-label">Simple Organizer</span>
             </button>
         </nav>
 
@@ -332,7 +342,7 @@
                                 type="text"
                                 id="plexServerIp"
                                 name="plexServerIp"
-                                value=""
+                                value="plex.local"
                                 placeholder="192.168.1.100 or plex.local"
                                 required
                             >
@@ -356,7 +366,7 @@
                                 type="password"
                                 id="plexToken"
                                 name="plexToken"
-                                value=""
+                                value="yfuFsNv_xktPf_Wx3zeK"
                                 placeholder="Your Plex authentication token"
                                 required
                             >
@@ -568,12 +578,12 @@
                 <div id="albumRenamePreviewContainer" class="card" style="display: none; margin-top: 20px;">
                     <h3>Preview Album Folder Renames</h3>
                     <p style="color: #64748b; font-size: 14px; margin-bottom: 15px;">
-                        Review the proposed album folder renames. Only folders with corrected names will be renamed, and metadata will be updated.
+                        Review the albums to process. All accepted albums will have their track files renamed (based on title metadata) and all metadata updated (artist, album, track number).
                     </p>
                     <div id="albumRenamePreviewList" class="rename-preview-list"></div>
                     <div class="button-group" style="margin-top: 20px;">
                         <button type="button" id="executeAlbumRenamesBtn" class="button-primary">
-                            ✅ Execute Album Renames
+                            ✅ Execute All Updates
                         </button>
                         <button type="button" id="cancelAlbumRenamesBtn" class="button-secondary">
                             Cancel
@@ -584,12 +594,16 @@
                 <!-- Match Results Review -->
                 <div id="matchResultsContainer" class="card" style="display: none; margin-top: 20px;">
                     <h3>Step 2: Review Match Results</h3>
-                    <div class="filter-buttons" style="margin-bottom: 15px;">
+                    <div class="filter-buttons" style="margin-bottom: 15px; display: flex; flex-wrap: wrap; gap: 8px; align-items: center;">
                         <button class="filter-btn active" data-filter="all">All</button>
                         <button class="filter-btn" data-filter="auto_approve">Auto-Approved</button>
                         <button class="filter-btn" data-filter="review">Review Required</button>
                         <button class="filter-btn" data-filter="manual">Manual Search</button>
                         <button class="filter-btn" data-filter="skipped">Skipped</button>
+                        <span style="margin-left: auto;"></span>
+                        <button type="button" id="acceptAllPendingBtn" class="button-primary" style="font-size: 12px; padding: 6px 12px;">
+                            ✅ Accept All Pending
+                        </button>
                     </div>
 
                     <div id="matchResultsList" class="match-results-list"></div>
@@ -1016,10 +1030,232 @@
         </div>
     </div>
 
+    <!-- Ask Claude Modal -->
+    <div id="askClaudeModal" class="modal">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h2>🤖 Ask Claude</h2>
+                <button class="modal-close" onclick="document.getElementById('askClaudeModal').style.display='none'">&times;</button>
+            </div>
+            <div class="modal-body">
+                <div id="askClaudeContext" class="ask-claude-context">
+                    <!-- Context will be populated dynamically -->
+                </div>
+
+                <div class="form-group">
+                    <label for="askClaudePrompt">Your Question for Claude AI</label>
+                    <textarea id="askClaudePrompt" rows="5" placeholder="Example: Can you help me identify this artist? Are these tracks from the same album?"></textarea>
+                </div>
+
+                <div class="button-group">
+                    <button type="button" id="submitClaudeBtn" class="button-primary">Ask Claude</button>
+                    <button type="button" class="button-secondary" onclick="document.getElementById('askClaudeModal').style.display='none'">Cancel</button>
+                </div>
+
+                <div id="askClaudeResponse" class="ask-claude-response" style="display: none;">
+                    <!-- Response will be populated dynamically -->
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Duplicate Cleanup Modal (for compilation downloads) -->
+    <div id="duplicateCleanupModal" class="modal">
+        <div class="modal-content" style="max-width: 700px;">
+            <div class="modal-header">
+                <h2>🗑️ Clean Up Duplicates Before Download</h2>
+                <button class="modal-close" onclick="closeDuplicateModal()">&times;</button>
+            </div>
+            <div class="modal-body">
+                <div id="duplicateModalLoading" style="text-align: center; padding: 20px;">
+                    <p>🔍 Searching for duplicate tracks in your library...</p>
+                </div>
+                <div id="duplicateModalContent" style="display: none;">
+                    <p id="duplicateModalDescription" class="modal-description"></p>
+
+                    <div id="duplicateTrackList" style="max-height: 400px; overflow-y: auto; margin: 15px 0;">
+                        <!-- Duplicate tracks will be listed here -->
+                    </div>
+
+                    <div id="duplicateSummary" style="background: #2a2a2a; padding: 10px; border-radius: 5px; margin-top: 15px;">
+                        <!-- Summary will appear here -->
+                    </div>
+                </div>
+                <div id="duplicateModalError" style="display: none; color: #ff6b6b; padding: 20px;">
+                    <!-- Error message will appear here -->
+                </div>
+
+                <div class="button-group" style="margin-top: 20px;">
+                    <button type="button" id="deleteDuplicatesBtn" class="button-primary" style="background: #dc3545;" onclick="deleteDuplicatesAndDownload()">
+                        🗑️ Delete Duplicates & Open YouTube
+                    </button>
+                    <button type="button" class="button-secondary" onclick="skipDuplicatesAndDownload()">
+                        ⏭️ Skip & Open YouTube
+                    </button>
+                    <button type="button" class="button-secondary" onclick="closeDuplicateModal()">
+                        Cancel
+                    </button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Module 4: Artist Radar Dashboard -->
+    <div id="module-radar" class="module-container">
+        <h1>Artist Radar & Discovery Dashboard</h1>
+        <p class="subtitle">Monitor rated artists for new releases and missing albums</p>
+
+        <!-- Plex Connection Section -->
+        <div class="radar-plex-connection">
+            <h2>Plex Connection</h2>
+            <div class="radar-plex-form">
+                <div>
+                    <label for="radarPlexServer">Plex Server IP/Hostname:</label>
+                    <input type="text" id="radarPlexServer" placeholder="192.168.1.100 or plex.local">
+                </div>
+                <div>
+                    <label for="radarPlexPort">Port:</label>
+                    <input type="text" id="radarPlexPort" value="32400">
+                </div>
+                <div>
+                    <label for="radarPlexToken">Plex Token:</label>
+                    <input type="text" id="radarPlexToken" placeholder="Your Plex token">
+                </div>
+                <div>
+                    <label for="radarPlexLibrary">Music Library:</label>
+                    <select id="radarPlexLibrary" disabled>
+                        <option>Connect first...</option>
+                    </select>
+                </div>
+                <div>
+                    <label for="radarRatingFilter">Artist Rating Filter:</label>
+                    <select id="radarRatingFilter">
+                        <option value="all" selected>All Rated Artists (1-5 stars)</option>
+                        <option value="5">⭐⭐⭐⭐⭐ 5 stars only (30-day window)</option>
+                        <option value="4-5">⭐⭐⭐⭐ 4-5 stars (30-60 day window)</option>
+                        <option value="3-5">⭐⭐⭐ 3-5 stars (30-90 day window)</option>
+                        <option value="2-5">⭐⭐ 2-5 stars (30-180 day window)</option>
+                    </select>
+                </div>
+            </div>
+            <div class="radar-action-buttons">
+                <button type="button" id="radarTestConnectionBtn">Test Connection</button>
+                <button type="button" id="scanRadarBtn" disabled>Scan Artists</button>
+                <button type="button" id="scanCompilationsBtn" disabled>Find Compilations</button>
+                <button type="button" id="viewIgnoredBtn">View Ignored Releases</button>
+            </div>
+            <div id="radarConnectionStatus"></div>
+        </div>
+
+        <!-- Scan Progress -->
+        <div id="radarScanProgress" style="display: none;"></div>
+
+        <!-- Results Section -->
+        <div id="radarResults" style="display: none;">
+            <div id="radarNewReleases"></div>
+            <div id="radarMissingAlbums"></div>
+        </div>
+
+        <!-- Compilation Opportunities Section -->
+        <div id="radarCompilationsSection" style="display: none;">
+            <h2>💿 Compilation Opportunities</h2>
+            <p class="subtitle">Compilations/Best-Of albums that can replace individual tracks you already have</p>
+            <div id="radarCompilationsProgress" style="display: none;"></div>
+            <div id="radarCompilationsResults"></div>
+        </div>
+    </div>
+
+    <!-- Module 5: Simple File Organizer -->
+    <div id="module-simple-organizer" class="module-container">
+        <h1>Simple File Organizer</h1>
+        <p class="subtitle">Organize music files using embedded metadata - no MusicBrainz matching required</p>
+
+        <div class="info-box">
+            <strong>How it works:</strong> This tool reads artist, album, and title from your files' embedded metadata
+            and organizes them into a Plex-compatible structure: <code>{Artist}/{Album}/{TrackNumber} - {Title}.ext</code>
+        </div>
+
+        <form id="simpleOrganizerForm">
+            <div class="form-group">
+                <label for="simpleOrgSourcePath">Source Directory *</label>
+                <input
+                    type="text"
+                    id="simpleOrgSourcePath"
+                    name="sourcePath"
+                    placeholder="/path/to/unorganized/music"
+                    required
+                >
+                <small>Directory containing unorganized audio files</small>
+            </div>
+
+            <div class="form-group">
+                <label for="simpleOrgDestPath">Destination Directory *</label>
+                <input
+                    type="text"
+                    id="simpleOrgDestPath"
+                    name="destinationPath"
+                    placeholder="/path/to/organized/music"
+                    required
+                >
+                <small>Where to create the organized folder structure</small>
+            </div>
+
+            <div class="form-group">
+                <label for="simpleOrgMode">Operation Mode</label>
+                <select id="simpleOrgMode" name="mode">
+                    <option value="copy">Copy (Keep originals)</option>
+                    <option value="move">Move (Remove originals)</option>
+                </select>
+                <small>Copy keeps original files, Move removes them after organizing</small>
+            </div>
+
+            <div class="simple-org-actions">
+                <button type="button" id="simpleOrgScanBtn">1. Scan Files</button>
+                <button type="button" id="simpleOrgPreviewBtn" disabled>2. Preview Organization</button>
+                <button type="button" id="simpleOrgExecuteBtn" disabled>3. Execute</button>
+            </div>
+        </form>
+
+        <!-- Scan Progress -->
+        <div id="simpleOrgScanProgress" style="display: none;"></div>
+
+        <!-- Scan Results -->
+        <div id="simpleOrgScanResults" style="display: none;">
+            <h3>Scan Results</h3>
+            <div class="scan-stats"></div>
+        </div>
+
+        <!-- Preview Section -->
+        <div id="simpleOrgPreview" style="display: none;">
+            <h3>Organization Preview</h3>
+            <div class="preview-stats"></div>
+            <div class="preview-table-container">
+                <table id="simpleOrgPreviewTable">
+                    <thead>
+                        <tr>
+                            <th>Original Path</th>
+                            <th>→</th>
+                            <th>New Path</th>
+                        </tr>
+                    </thead>
+                    <tbody></tbody>
+                </table>
+            </div>
+        </div>
+
+        <!-- Execute Progress -->
+        <div id="simpleOrgExecuteProgress" style="display: none;"></div>
+
+        <!-- Execute Results -->
+        <div id="simpleOrgExecuteResults" style="display: none;"></div>
+    </div>
+
     <!-- JavaScript modules -->
-    <script src="/js/router.js"></script>
-    <script src="/js/downloader.js"></script>
-    <script src="/js/organizer.js"></script>
-    <script src="/js/upgrader.js"></script>
+    <script src="/js/router.js?v=2.0.1.20251125"></script>
+    <script src="/js/downloader.js?v=2.0.1.20251125"></script>
+    <script src="/js/organizer.js?v=2.0.1.20251125"></script>
+    <script src="/js/upgrader.js?v=2.0.1.20251125"></script>
+    <script src="/js/radar.js?v=2.0.1.20251125"></script>
+    <script src="/js/simple-organizer.js?v=2.0.1.20251125"></script>
 </body>
 </html>

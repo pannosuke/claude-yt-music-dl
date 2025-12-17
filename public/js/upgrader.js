@@ -141,7 +141,7 @@ async function handleTestConnection() {
             savePlexSettings(serverIp, port, token);
 
             // Fetch libraries
-            await fetchLibraries(serverIp, port, token);
+            await fetchUpgraderLibraries(serverIp, port, token);
         } else {
             statusDiv.textContent = `❌ Connection failed: ${result.error}`;
             statusDiv.className = 'error-message';
@@ -159,7 +159,7 @@ async function handleTestConnection() {
 /**
  * Fetch available Plex libraries
  */
-async function fetchLibraries(serverIp, port, token) {
+async function fetchUpgraderLibraries(serverIp, port, token) {
     try {
         const response = await fetch('http://localhost:3000/api/plex/libraries', {
             method: 'POST',
@@ -170,7 +170,7 @@ async function fetchLibraries(serverIp, port, token) {
         const result = await response.json();
 
         if (result.success) {
-            displayLibraries(result.libraries);
+            displayUpgraderLibraries(result.libraries);
             document.getElementById('upgraderLibraryContainer').style.display = 'block';
         }
     } catch (error) {
@@ -179,9 +179,9 @@ async function fetchLibraries(serverIp, port, token) {
 }
 
 /**
- * Display Plex libraries
+ * Display Plex libraries (UPGRADER version)
  */
-function displayLibraries(libraries) {
+function displayUpgraderLibraries(libraries) {
     const container = document.getElementById('upgraderLibraryList');
     container.innerHTML = '';
 

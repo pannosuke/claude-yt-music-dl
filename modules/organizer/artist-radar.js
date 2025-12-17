@@ -345,11 +345,45 @@ async function fetchArtistTracks(plexConfig, artistRatingKey) {
 
 /**
  * Get all ignored releases
+ * @param {boolean} compilationsOnly - If true, only return compilations
  */
-function getIgnoredReleases() {
+function getIgnoredReleases(compilationsOnly = false) {
     const db = initRadarDatabase();
+
     const stmt = db.prepare('SELECT * FROM ignored_releases ORDER BY ignored_at DESC');
-    return stmt.all();
+    const allReleases = stmt.all();
+
+    if (compilationsOnly) {
+        // Filter using the same logic as isCompilationAlbum()
+        return allReleases.filter(release => {
+            // Check if it's marked as Compilation type
+            if (release.release_type === 'Compilation') {
+                return true;
+            }
+
+            // Check title for compilation-specific phrases (multi-word patterns)
+            const title = release.release_title.toLowerCase();
+            const compilationKeywords = [
+                'best of',
+                'best-of',
+                'greatest hits',
+                'the best',
+                'collection',
+                'anthology',
+                'essential',
+                'complete',
+                'definitive',
+                'selected',
+                'singles collection',
+                'the hits',
+                'ultimate'
+            ];
+
+            return compilationKeywords.some(keyword => title.includes(keyword));
+        });
+    }
+
+    return allReleases;
 }
 
 /**
@@ -381,14 +415,452 @@ function ignoreRelease(artistName, releaseTitle, releaseMbid = null, releaseType
 
 /**
  * Remove a release from ignore list
+ * Only allows unignoring compilations to prevent accidentally un-ignoring regular albums
  */
 function unignoreRelease(id) {
     const db = initRadarDatabase();
+
+    // First check if this release is a compilation
+    const checkStmt = db.prepare(`
+        SELECT release_type, release_title FROM ignored_releases WHERE id = ?
+    `);
+    const release = checkStmt.get(id);
+
+    if (!release) {
+        console.log(`[Artist Radar] Release ID ${id} not found`);
+        return { success: false, error: 'Release not found' };
+    }
+
+    // Check if it's a compilation using the same logic as getIgnoredReleases(compilationsOnly=true)
+    let isCompilation = false;
+
+    // Check if it's marked as Compilation type
+    if (release.release_type === 'Compilation') {
+        isCompilation = true;
+    } else {
+        // Check title for compilation-specific phrases (multi-word patterns)
+        const title = release.release_title.toLowerCase();
+        const compilationKeywords = [
+            'best of',
+            'best-of',
+            'greatest hits',
+            'the best',
+            'collection',
+            'anthology',
+            'essential',
+            'complete',
+            'definitive',
+            'selected',
+            'singles collection',
+            'the hits',
+            'ultimate'
+        ];
+
+        isCompilation = compilationKeywords.some(keyword => title.includes(keyword));
+    }
+
+    if (!isCompilation) {
+        console.log(`[Artist Radar] Cannot unignore "${release.release_title}" - not a compilation`);
+        return { success: false, error: 'Only compilations can be unignored' };
+    }
+
     const stmt = db.prepare('DELETE FROM ignored_releases WHERE id = ?');
     stmt.run(id);
 
-    console.log(`[Artist Radar] Unignored release ID: ${id}`);
+    console.log(`[Artist Radar] Unignored compilation ID: ${id} (${release.release_title})`);
     return { success: true };
+}
+
+/**
+ * Check if an album is a compilation/best-of based on title and secondary types
+ */
+function isCompilationAlbum(release) {
+    // Check MusicBrainz secondary types
+    if (release.secondaryTypes && release.secondaryTypes.includes('Compilation')) {
+        return true;
+    }
+
+    // Check title for compilation keywords
+    const title = release.title.toLowerCase();
+    const compilationKeywords = [
+        'best of',
+        'best-of',
+        'greatest hits',
+        'the best',
+        'collection',
+        'anthology',
+        'essential',
+        'complete',
+        'definitive',
+        'selected',
+        'singles collection',
+        'the hits',
+        'ultimate'
+    ];
+
+    return compilationKeywords.some(keyword => title.includes(keyword));
+}
+
+/**
+ * Fetch tracklist for a release group from MusicBrainz
+ */
+async function fetchReleaseTracklist(releaseMbid) {
+    const { MusicBrainzApi } = await import('musicbrainz-api');
+    const mbApi = new MusicBrainzApi({
+        appName: 'yt-music-dl',
+        appVersion: '2.0.0',
+        appContactInfo: 'claude-yt-music-dl'
+    });
+
+    try {
+        // Get release-group details with releases
+        const releaseGroup = await mbApi.lookup('release-group', releaseMbid, ['releases']);
+
+        if (!releaseGroup.releases || releaseGroup.releases.length === 0) {
+            return [];
+        }
+
+        // Get the first release (usually the original)
+        const release = releaseGroup.releases[0];
+
+        // Fetch full release details with recordings
+        const releaseDetails = await mbApi.lookup('release', release.id, ['recordings']);
+
+        if (!releaseDetails.media) {
+            return [];
+        }
+
+        // Extract track titles
+        const tracks = [];
+        for (const medium of releaseDetails.media) {
+            if (medium.tracks) {
+                for (const track of medium.tracks) {
+                    if (track.recording) {
+                        tracks.push({
+                            title: track.recording.title,
+                            position: track.position
+                        });
+                    }
+                }
+            }
+        }
+
+        return tracks;
+    } catch (error) {
+        console.error(`[Artist Radar] Error fetching tracklist for ${releaseMbid}:`, error.message);
+        return [];
+    }
+}
+
+/**
+ * Normalize track title for comparison
+ */
+function normalizeTrackTitle(title) {
+    return title
+        .toLowerCase()
+        .replace(/[^\w\s]/g, '') // Remove punctuation
+        .replace(/\s+/g, ' ')    // Normalize spaces
+        .trim();
+}
+
+/**
+ * Fuzzy match two track titles
+ * Handles variations like "Don't Start Now" vs "Don't Start Now - Radio Edit"
+ */
+function fuzzyMatchTitles(title1, title2) {
+    const norm1 = normalizeTrackTitle(title1);
+    const norm2 = normalizeTrackTitle(title2);
+
+    // Exact match after normalization
+    if (norm1 === norm2) return true;
+
+    // One contains the other (handles "Song" vs "Song - Radio Edit" or "Song (Remix)")
+    if (norm1.includes(norm2) || norm2.includes(norm1)) return true;
+
+    // Check if base title matches (before common suffixes)
+    const suffixPatterns = [
+        /\s*radio edit$/i,
+        /\s*single version$/i,
+        /\s*album version$/i,
+        /\s*remaster(ed)?$/i,
+        /\s*\d{4}\s*remaster$/i,
+        /\s*live$/i,
+        /\s*acoustic$/i,
+        /\s*remix$/i,
+        /\s*extended$/i,
+        /\s*instrumental$/i
+    ];
+
+    let base1 = norm1;
+    let base2 = norm2;
+
+    for (const pattern of suffixPatterns) {
+        base1 = base1.replace(pattern, '').trim();
+        base2 = base2.replace(pattern, '').trim();
+    }
+
+    return base1 === base2;
+}
+
+/**
+ * Find duplicate tracks in Plex library that match compilation tracks
+ * @param {Object} plexConfig - Plex server config {serverIp, port, token}
+ * @param {string} artistName - Artist name
+ * @param {string} releaseMbid - MusicBrainz release group ID
+ * @returns {Promise<Object>} Compilation tracks and matching Plex duplicates
+ */
+async function findCompilationDuplicates(plexConfig, artistName, releaseMbid) {
+    console.log(`[Artist Radar] Finding duplicates for ${artistName} compilation (MBID: ${releaseMbid})`);
+
+    // 1. Fetch compilation tracklist from MusicBrainz
+    const compilationTracks = await fetchReleaseTracklist(releaseMbid);
+    if (!compilationTracks || compilationTracks.length === 0) {
+        console.log(`[Artist Radar] No tracks found for compilation ${releaseMbid}`);
+        return { compilationTracks: [], duplicates: [], error: 'Could not fetch compilation tracklist from MusicBrainz' };
+    }
+
+    console.log(`[Artist Radar] Compilation has ${compilationTracks.length} tracks`);
+
+    // 2. Find the artist in Plex
+    const { serverIp, port, token } = plexConfig;
+
+    // Search for artist by name
+    const searchData = await plexRequest(serverIp, port, `/library/sections/1/search?type=8&query=${encodeURIComponent(artistName)}`, token);
+    const artists = searchData.MediaContainer.Metadata || [];
+
+    if (artists.length === 0) {
+        console.log(`[Artist Radar] Artist "${artistName}" not found in Plex`);
+        return { compilationTracks, duplicates: [], error: `Artist "${artistName}" not found in Plex library` };
+    }
+
+    // Find best matching artist
+    const artist = artists.find(a => a.title.toLowerCase() === artistName.toLowerCase()) || artists[0];
+    console.log(`[Artist Radar] Found artist in Plex: ${artist.title} (ratingKey: ${artist.ratingKey})`);
+
+    // 3. Fetch all tracks by this artist from Plex
+    const { tracks: plexTracks } = await fetchArtistTracks(plexConfig, artist.ratingKey);
+    console.log(`[Artist Radar] Found ${plexTracks.length} tracks by ${artist.title} in Plex`);
+
+    // 4. Find duplicates - tracks in Plex that match compilation tracks
+    const duplicates = [];
+
+    for (const compilationTrack of compilationTracks) {
+        const matchingPlexTracks = plexTracks.filter(plexTrack =>
+            fuzzyMatchTitles(compilationTrack.title, plexTrack.title)
+        );
+
+        for (const plexTrack of matchingPlexTracks) {
+            // Get file path from Plex track
+            const filePath = plexTrack.Media?.[0]?.Part?.[0]?.file || null;
+
+            duplicates.push({
+                compilationTrack: compilationTrack.title,
+                plexTrack: plexTrack.title,
+                album: plexTrack.parentTitle || 'Unknown Album',
+                filePath: filePath,
+                ratingKey: plexTrack.ratingKey
+            });
+        }
+    }
+
+    console.log(`[Artist Radar] Found ${duplicates.length} duplicate tracks to delete`);
+
+    return {
+        compilationTracks,
+        duplicates,
+        artist: artist.title
+    };
+}
+
+/**
+ * Delete duplicate files from the filesystem
+ * @param {string[]} filePaths - Array of file paths to delete
+ * @returns {Promise<Object>} Result with deleted and failed counts
+ */
+async function deleteDuplicateFiles(filePaths) {
+    const results = {
+        deleted: [],
+        failed: [],
+        emptyAlbumsRemoved: []
+    };
+
+    for (const filePath of filePaths) {
+        try {
+            // Check if file exists
+            await fs.promises.access(filePath);
+
+            // Delete the file
+            await fs.promises.unlink(filePath);
+            console.log(`[Artist Radar] Deleted: ${filePath}`);
+            results.deleted.push(filePath);
+
+            // Check if parent album folder is now empty
+            const albumFolder = path.dirname(filePath);
+            const remainingFiles = await fs.promises.readdir(albumFolder);
+            const audioFiles = remainingFiles.filter(f =>
+                ['.flac', '.mp3', '.m4a', '.aac', '.ogg', '.wav'].includes(path.extname(f).toLowerCase())
+            );
+
+            if (audioFiles.length === 0) {
+                // Remove empty album folder and any remaining non-audio files
+                await fs.promises.rm(albumFolder, { recursive: true });
+                console.log(`[Artist Radar] Removed empty album folder: ${albumFolder}`);
+                results.emptyAlbumsRemoved.push(albumFolder);
+
+                // Check if artist folder is now empty
+                const artistFolder = path.dirname(albumFolder);
+                const remainingAlbums = await fs.promises.readdir(artistFolder);
+                if (remainingAlbums.length === 0) {
+                    await fs.promises.rm(artistFolder, { recursive: true });
+                    console.log(`[Artist Radar] Removed empty artist folder: ${artistFolder}`);
+                }
+            }
+        } catch (error) {
+            console.error(`[Artist Radar] Failed to delete ${filePath}: ${error.message}`);
+            results.failed.push({ path: filePath, error: error.message });
+        }
+    }
+
+    return results;
+}
+
+/**
+ * Find compilation opportunities for rated artists
+ */
+async function findCompilationOpportunities(plexConfig, ratedArtists, progressCallback = null) {
+    const opportunities = [];
+
+    for (let i = 0; i < ratedArtists.length; i++) {
+        const artist = ratedArtists[i];
+
+        if (progressCallback) {
+            progressCallback({
+                type: 'progress',
+                message: `Checking compilations for ${artist.name} (${i + 1}/${ratedArtists.length})`,
+                current: i + 1,
+                total: ratedArtists.length
+            });
+        }
+
+        // Skip 1-star artists
+        if (artist.rating === 1) {
+            continue;
+        }
+
+        // Get cached or fetch discography
+        const discography = await fetchMusicBrainzDiscography(artist.name, artist.rating, artist.mbid);
+
+        console.log(`[Artist Radar] ${artist.name}: ${discography.length} releases in discography`);
+
+        // Find compilations in discography
+        const compilations = discography.filter(release => isCompilationAlbum(release));
+
+        console.log(`[Artist Radar] ${artist.name}: ${compilations.length} compilations detected`);
+        if (compilations.length > 0) {
+            console.log(`[Artist Radar] ${artist.name}: Compilation titles:`, compilations.map(c => c.title));
+        }
+
+        if (compilations.length === 0) {
+            continue;
+        }
+
+        // Fetch existing Plex tracks
+        const { tracks: plexTracks, albums: plexAlbums } = await fetchArtistTracks(plexConfig, artist.ratingKey);
+
+        // Check if compilation is already in library
+        for (const compilation of compilations) {
+            console.log(`[Artist Radar] ${artist.name}: Checking compilation "${compilation.title}"`);
+
+            const alreadyInLibrary = plexAlbums.some(album =>
+                album.toLowerCase() === compilation.title.toLowerCase()
+            );
+
+            if (alreadyInLibrary) {
+                console.log(`[Artist Radar] ${artist.name}: "${compilation.title}" - Already in library, skipping`);
+                continue;
+            }
+
+            if (isReleaseIgnored(artist.name, compilation.title)) {
+                console.log(`[Artist Radar] ${artist.name}: "${compilation.title}" - Ignored by user, skipping`);
+                continue;
+            }
+
+            // Fetch compilation tracklist
+            if (!compilation.mbid) {
+                console.log(`[Artist Radar] ${artist.name}: "${compilation.title}" - No MBID, skipping`);
+                continue;
+            }
+
+            const compilationTracks = await fetchReleaseTracklist(compilation.mbid);
+
+            if (compilationTracks.length === 0) {
+                console.log(`[Artist Radar] ${artist.name}: "${compilation.title}" - No tracks found, skipping`);
+                continue;
+            }
+
+            console.log(`[Artist Radar] ${artist.name}: "${compilation.title}" - ${compilationTracks.length} tracks in compilation`);
+
+            // Normalize Plex track titles
+            const plexTrackTitles = plexTracks.map(t => normalizeTrackTitle(t.title));
+
+            // Find matching tracks in Plex library
+            const matchingTracks = [];
+            for (const compilationTrack of compilationTracks) {
+                const normalized = normalizeTrackTitle(compilationTrack.title);
+                const plexMatch = plexTracks.find(pt =>
+                    normalizeTrackTitle(pt.title) === normalized
+                );
+
+                if (plexMatch) {
+                    matchingTracks.push({
+                        compilationTrack: compilationTrack.title,
+                        plexTrack: plexMatch.title,
+                        plexAlbum: plexMatch.parentTitle,
+                        plexKey: plexMatch.ratingKey
+                    });
+                }
+            }
+
+            // Calculate replacement value
+            const matchPercentage = Math.round((matchingTracks.length / compilationTracks.length) * 100);
+
+            console.log(`[Artist Radar] ${artist.name}: "${compilation.title}" - ${matchingTracks.length}/${compilationTracks.length} tracks match (${matchPercentage}%)`);
+
+            // Only suggest if at least 50% of tracks already exist
+            if (matchPercentage >= 50) {
+                console.log(`[Artist Radar] ${artist.name}: "${compilation.title}" - OPPORTUNITY FOUND! Match: ${matchPercentage}%`);
+            } else {
+                console.log(`[Artist Radar] ${artist.name}: "${compilation.title}" - Below 50% threshold, skipping`);
+                continue;
+            }
+
+            if (matchPercentage >= 50) {
+                opportunities.push({
+                    artist: artist.name,
+                    artistRating: artist.rating,
+                    compilation: {
+                        title: compilation.title,
+                        mbid: compilation.mbid,
+                        releaseDate: compilation.releaseDate || 'Unknown',
+                        trackCount: compilationTracks.length
+                    },
+                    matchingTracks,
+                    matchPercentage,
+                    replaceable: matchingTracks.length
+                });
+            }
+        }
+
+        // Rate limit
+        await new Promise(resolve => setTimeout(resolve, 1000));
+    }
+
+    // Sort by match percentage (highest first)
+    opportunities.sort((a, b) => b.matchPercentage - a.matchPercentage);
+
+    console.log(`[Artist Radar] Found ${opportunities.length} compilation opportunities`);
+
+    return opportunities;
 }
 
 /**
@@ -482,6 +954,12 @@ async function buildDashboard(plexConfig, progressCallback = null) {
                 }
             }
 
+            // Filter out Singles for 4-star artists (only show EPs and Albums)
+            if (artist.rating === 4 && release.type === 'Single') {
+                console.log(`[Artist Radar] Filtering out Single "${release.title}" by ${artist.name} (4-star artist - Singles excluded)`);
+                continue;
+            }
+
             // Skip live albums and compilations for missing albums section
             const isLiveOrCompilation = release.secondaryTypes.includes('Live') ||
                                        release.secondaryTypes.includes('Compilation');
@@ -569,5 +1047,8 @@ export default {
     isReleaseIgnored,
     ignoreRelease,
     unignoreRelease,
-    buildDashboard
+    buildDashboard,
+    findCompilationOpportunities,
+    findCompilationDuplicates,
+    deleteDuplicateFiles
 };

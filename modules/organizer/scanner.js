@@ -456,8 +456,8 @@ export function groupByArtist(scannedFiles) {
     const groups = {};
 
     for (const file of scannedFiles) {
-        // Use metadata artist first, fall back to folder artist
-        const artist = file.metadata.artist || file.metadata.albumArtist || file.folderArtist || 'Unknown';
+        // Use album artist first (for compilations), fall back to track artist, then folder artist
+        const artist = file.metadata.albumArtist || file.metadata.artist || file.folderArtist || 'Unknown';
 
         // Get first character (uppercase)
         let firstChar = artist.charAt(0).toUpperCase();

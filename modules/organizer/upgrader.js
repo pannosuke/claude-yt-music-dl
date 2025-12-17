@@ -343,59 +343,92 @@ function isAlreadyUpgraded(filePath) {
     return result !== undefined;
 }
 /**
- * Copy metadata from original file to new FLAC using FFmpeg
+ * Copy metadata from original file to new FLAC using metaflac
  */
 async function copyMetadata(originalPath, newPath, originalMetadata) {
-    return new Promise((resolve, reject) => {
-        // Create a temporary file path
-        const tempPath = newPath + '.temp.flac';
+    return new Promise(async (resolve, reject) => {
+        try {
+            // Parse metadata from original file
+            const metadata = await parseFile(originalPath);
+            const common = metadata.common;
 
-        // Build FFmpeg arguments to copy metadata
-        const ffmpegArgs = [
-            '-i', newPath,           // Input: new FLAC (without metadata)
-            '-i', originalPath,       // Input: original file (with metadata)
-            '-map', '0:a',            // Map audio from first input (new FLAC)
-            '-map_metadata', '1',     // Map all metadata from second input (original)
-            '-c:a', 'copy',           // Copy audio codec (no re-encoding)
-            '-y',                     // Overwrite output file
-            tempPath                  // Output to temp file
-        ];
+            console.log(`[Upgrader] Copying metadata from original file...`);
+            console.log(`[Upgrader] Artist: ${common.artist || 'N/A'}`);
+            console.log(`[Upgrader] Album: ${common.album || 'N/A'}`);
+            console.log(`[Upgrader] Title: ${common.title || 'N/A'}`);
+            console.log(`[Upgrader] Year: ${common.year || 'N/A'}`);
+            console.log(`[Upgrader] Track: ${common.track?.no || 'N/A'}`);
 
-        console.log(`[Upgrader] Running FFmpeg to copy metadata...`);
-        const ffmpeg = spawn('ffmpeg', ffmpegArgs);
+            // Use metaflac to write metadata tags directly
+            const { exec } = await import('child_process');
+            const { promisify } = await import('util');
+            const execAsync = promisify(exec);
 
-        let stderr = '';
+            // Clear all existing tags from the new FLAC file first
+            await execAsync(`metaflac --remove-all-tags "${newPath}"`);
 
-        ffmpeg.stderr.on('data', (data) => {
-            stderr += data.toString();
-        });
+            // Set metadata tags from original file
+            const tags = [];
 
-        ffmpeg.on('close', (code) => {
-            if (code === 0) {
-                // Success - replace original new file with temp file
-                try {
-                    fs.unlinkSync(newPath);
-                    fs.renameSync(tempPath, newPath);
-                    console.log(`[Upgrader] Metadata copied successfully`);
-                    resolve();
-                } catch (error) {
-                    console.error(`[Upgrader] Error replacing file:`, error);
-                    reject(error);
-                }
-            } else {
-                console.error(`[Upgrader] FFmpeg metadata copy failed:`, stderr);
-                // Clean up temp file if it exists
-                if (fs.existsSync(tempPath)) {
-                    fs.unlinkSync(tempPath);
-                }
-                reject(new Error(`FFmpeg failed with code ${code}`));
+            if (common.artist) {
+                tags.push(`metaflac --set-tag=ARTIST="${common.artist}" "${newPath}"`);
             }
-        });
+            if (common.album) {
+                tags.push(`metaflac --set-tag=ALBUM="${common.album}" "${newPath}"`);
+            }
+            if (common.title) {
+                tags.push(`metaflac --set-tag=TITLE="${common.title}" "${newPath}"`);
+            }
+            if (common.year) {
+                tags.push(`metaflac --set-tag=DATE="${common.year}" "${newPath}"`);
+            }
+            if (common.track?.no) {
+                tags.push(`metaflac --set-tag=TRACKNUMBER="${common.track.no}" "${newPath}"`);
+            }
+            if (common.albumartist) {
+                tags.push(`metaflac --set-tag=ALBUMARTIST="${common.albumartist}" "${newPath}"`);
+            }
+            if (common.genre && common.genre.length > 0) {
+                tags.push(`metaflac --set-tag=GENRE="${common.genre.join(', ')}" "${newPath}"`);
+            }
+            if (common.comment && common.comment.length > 0) {
+                tags.push(`metaflac --set-tag=COMMENT="${common.comment.join(', ')}" "${newPath}"`);
+            }
 
-        ffmpeg.on('error', (error) => {
-            console.error(`[Upgrader] FFmpeg spawn error:`, error);
+            // Execute all tag commands
+            for (const cmd of tags) {
+                await execAsync(cmd);
+            }
+
+            // Import and export picture (album art) if present
+            if (common.picture && common.picture.length > 0) {
+                try {
+                    const picture = common.picture[0];
+                    const tempImagePath = newPath + '.cover.jpg';
+
+                    // Write picture data to temporary file
+                    fs.writeFileSync(tempImagePath, picture.data);
+
+                    // Import picture to FLAC
+                    await execAsync(`metaflac --import-picture-from="${tempImagePath}" "${newPath}"`);
+
+                    // Clean up temp file
+                    fs.unlinkSync(tempImagePath);
+
+                    console.log(`[Upgrader] Album art copied successfully`);
+                } catch (error) {
+                    console.error(`[Upgrader] Error copying album art:`, error.message);
+                    // Continue even if album art fails
+                }
+            }
+
+            console.log(`[Upgrader] Metadata copied successfully using metaflac`);
+            resolve();
+
+        } catch (error) {
+            console.error(`[Upgrader] Error copying metadata:`, error);
             reject(error);
-        });
+        }
     });
 }
 

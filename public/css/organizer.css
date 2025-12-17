@@ -1425,3 +1425,146 @@
     animation: fadeInSlide 0.4s ease-out;
 }
 
+/* Claude AI Indicator */
+.claude-ai-indicator {
+    display: inline-block;
+    padding: 6px 12px;
+    background: linear-gradient(135deg, #d32f2f 0%, #b71c1c 100%);
+    border: 1px solid #d32f2f;
+    border-radius: 6px;
+    font-weight: 600;
+    color: #fff;
+    animation: claudePulse 2s ease-in-out infinite;
+    box-shadow: 0 0 10px rgba(211, 47, 47, 0.4);
+}
+
+@keyframes claudePulse {
+    0%, 100% {
+        transform: scale(1);
+        box-shadow: 0 0 10px rgba(211, 47, 47, 0.4);
+    }
+    50% {
+        transform: scale(1.05);
+        box-shadow: 0 0 20px rgba(211, 47, 47, 0.6);
+    }
+}
+
+/* Ask Claude Modal Styles */
+.ask-claude-context {
+    background: #f7f9fc;
+    border: 1px solid #e1e8ed;
+    border-radius: 8px;
+    padding: 15px;
+    margin-bottom: 20px;
+}
+
+.ask-claude-context h4 {
+    margin: 0 0 10px 0;
+    font-size: 14px;
+    color: #333;
+    font-weight: 600;
+}
+
+.ask-claude-context p {
+    margin: 5px 0;
+    font-size: 13px;
+    color: #666;
+}
+
+.ask-claude-context ul {
+    margin: 10px 0;
+    padding-left: 20px;
+}
+
+.ask-claude-context li {
+    font-size: 12px;
+    color: #666;
+    margin: 3px 0;
+}
+
+.ask-claude-response {
+    background: #f0f4f8;
+    border: 1px solid #cbd5e0;
+    border-radius: 8px;
+    padding: 20px;
+    margin-top: 20px;
+}
+
+.ask-claude-response h4 {
+    margin: 0 0 15px 0;
+    font-size: 16px;
+    color: #2d3748;
+    font-weight: 600;
+}
+
+.ask-claude-response .response-section {
+    margin-bottom: 15px;
+}
+
+.ask-claude-response .response-section label {
+    display: block;
+    font-size: 12px;
+    color: #4a5568;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    margin-bottom: 5px;
+    font-weight: 600;
+}
+
+.ask-claude-response .response-section .value {
+    font-size: 14px;
+    color: #1a202c;
+    padding: 10px;
+    background: white;
+    border-radius: 6px;
+    border: 1px solid #e2e8f0;
+}
+
+.ask-claude-response .suggested-name {
+    font-size: 18px;
+    font-weight: 700;
+    color: #d32f2f;
+}
+
+.ask-claude-response .confidence-badge {
+    display: inline-block;
+    padding: 4px 12px;
+    border-radius: 12px;
+    font-size: 12px;
+    font-weight: 600;
+    margin-left: 10px;
+}
+
+.ask-claude-response .confidence-high {
+    background: #c6f6d5;
+    color: #22543d;
+}
+
+.ask-claude-response .confidence-medium {
+    background: #fef3c7;
+    color: #78350f;
+}
+
+.ask-claude-response .confidence-low {
+    background: #fed7d7;
+    color: #742a2a;
+}
+
+.ask-claude-btn {
+    background: linear-gradient(135deg, #d32f2f 0%, #b71c1c 100%);
+    color: white;
+    border: none;
+    padding: 8px 16px;
+    border-radius: 6px;
+    cursor: pointer;
+    font-size: 13px;
+    font-weight: 600;
+    transition: all 0.2s;
+}
+
+.ask-claude-btn:hover {
+    background: linear-gradient(135deg, #e53935 0%, #c62828 100%);
+    transform: translateY(-1px);
+    box-shadow: 0 4px 12px rgba(211, 47, 47, 0.3);
+}
+

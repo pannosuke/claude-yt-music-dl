@@ -237,8 +237,12 @@ Confidence should be 0-100 based on how clear the parsing was.`;
  */
 async function callClaudeCLI(prompt, timeout = 10000) {
     return new Promise((resolve, reject) => {
-        const claude = spawn('claude', ['-p', prompt], {
-            stdio: ['pipe', 'pipe', 'pipe']
+        // Use full path to claude CLI and inherit environment
+        const claudePath = process.env.CLAUDE_PATH || '/Users/eric/.npm-global/bin/claude';
+        const claude = spawn(claudePath, ['-p', prompt], {
+            stdio: ['ignore', 'pipe', 'pipe'],  // Close stdin to prevent hanging
+            env: { ...process.env, PATH: `${process.env.PATH}:/Users/eric/.npm-global/bin:/usr/local/bin` },
+            detached: false
         });
 
         let stdout = '';
@@ -247,8 +251,8 @@ async function callClaudeCLI(prompt, timeout = 10000) {
 
         // Set timeout
         timeoutHandle = setTimeout(() => {
-            claude.kill('SIGTERM');
-            reject(new Error('Claude CLI timeout after 10s'));
+            claude.kill('SIGKILL');  // Use SIGKILL for forceful termination
+            reject(new Error(`Claude CLI timeout after ${timeout / 1000}s`));
         }, timeout);
 
         claude.stdout.on('data', (data) => {
@@ -482,9 +486,240 @@ export async function isClaudeCLIAvailable() {
     }
 }
 
+/**
+ * AI-powered artist matching (fallback when MusicBrainz fails)
+ * Analyzes artist name and suggests corrections or alternatives
+ *
+ * @param {string} artistName - Original artist name from metadata
+ * @param {Array<Object>} files - Sample files from this artist for context
+ * @returns {Promise<{suggested: string, confidence: number, reasoning: string}>}
+ */
+export async function matchArtistWithAI(artistName, files = []) {
+    console.log(`[AI Engine] Attempting AI match for artist: "${artistName}"`);
+
+    // Gather context from sample files
+    const sampleSize = Math.min(5, files.length);
+    const sampleFiles = files.slice(0, sampleSize);
+    const trackTitles = sampleFiles
+        .map(f => {
+            const metadata = f.metadata || f;
+            return metadata.title || f.fileName || '';
+        })
+        .filter(t => t && t !== 'Unknown')
+        .slice(0, 5);
+
+    const albumTitles = [...new Set(sampleFiles
+        .map(f => {
+            const metadata = f.metadata || f;
+            return metadata.album || f.folderAlbum || '';
+        })
+        .filter(a => a && a !== 'Unknown' && a !== 'Unknown Album')
+    )].slice(0, 3);
+
+    const prompt = `You are a music metadata expert. A music file organizer couldn't find a match for this artist in MusicBrainz. Your task is to suggest the correct artist name or identify if this is a valid artist.
+
+Artist name: "${artistName}"
+
+Sample tracks from this artist:
+${trackTitles.length > 0 ? trackTitles.map((t, i) => `${i + 1}. ${t}`).join('\n') : 'No track titles available'}
+
+Sample albums:
+${albumTitles.length > 0 ? albumTitles.map((a, i) => `${i + 1}. ${a}`).join('\n') : 'No album titles available'}
+
+Analyze this information and determine:
+1. Is this a real artist name or a placeholder/metadata error?
+2. If it's a metadata error, what's the likely correct artist name based on the track/album context?
+3. Could this be a typo, romanization variant, or alternate spelling?
+4. If it seems like a compilation or "Various Artists" situation
+
+Respond ONLY with valid JSON in this exact format (no markdown, no explanations):
+{
+  "isValid": true/false,
+  "suggested": "Suggested Artist Name (or original if valid)",
+  "confidence": 0-100,
+  "reasoning": "Brief explanation of your analysis"
+}
+
+Examples:
+- If artistName is "NA" or "Unknown" → isValid: false, suggest based on track analysis
+- If artistName is a typo like "Beatels" → suggest "The Beatles"
+- If artistName is romaji variant → suggest proper spelling if identifiable
+- If artistName seems correct → suggested: same as original, isValid: true`;
+
+    try {
+        const result = await callClaudeCLI(prompt, 60000); // 60s timeout for AI artist matching
+        const parsed = JSON.parse(result);
+
+        // Validate response structure
+        if (typeof parsed.isValid !== 'boolean' || !parsed.suggested || typeof parsed.confidence !== 'number') {
+            throw new Error('Invalid AI response structure');
+        }
+
+        console.log(`[AI Engine] AI artist match: "${artistName}" → "${parsed.suggested}" (${parsed.confidence}% confidence)`);
+        console.log(`[AI Engine] Reasoning: ${parsed.reasoning}`);
+
+        return parsed;
+
+    } catch (error) {
+        console.error(`[AI Engine] AI artist matching failed: ${error.message}`);
+        // Return original artist with low confidence
+        return {
+            isValid: false,
+            suggested: artistName,
+            confidence: 0,
+            reasoning: `AI matching failed: ${error.message}`
+        };
+    }
+}
+
+/**
+ * AI-powered album matching (fallback when MusicBrainz fails)
+ * Analyzes track names to identify the album
+ *
+ * @param {string} artistName - Artist name (corrected if possible)
+ * @param {string} albumName - Original album name from metadata
+ * @param {Array<Object>} files - Track files from this album for context
+ * @returns {Promise<{suggested: string, confidence: number, reasoning: string}>}
+ */
+export async function matchAlbumWithAI(artistName, albumName, files = []) {
+    console.log(`[AI Engine] Attempting AI match for album: "${artistName} - ${albumName}"`);
+
+    // Gather track context
+    const trackTitles = files
+        .map(f => {
+            const metadata = f.metadata || f;
+            return metadata.title || f.fileName || '';
+        })
+        .filter(t => t && t !== 'Unknown')
+        .slice(0, 10); // Use up to 10 tracks for album identification
+
+    const prompt = `You are a music metadata expert. A music file organizer couldn't find a match for this album in MusicBrainz. Your task is to identify the correct album name by analyzing the track listing.
+
+Artist: "${artistName}"
+Album name: "${albumName}"
+
+Track listing:
+${trackTitles.length > 0 ? trackTitles.map((t, i) => `${i + 1}. ${t}`).join('\n') : 'No track titles available'}
+
+Analyze this information and determine:
+1. Is this a real album or a placeholder folder (like "Unknown Album", "NA", "Disc 1", etc.)?
+2. Based on the track names, can you identify what album this is?
+3. Could the album name be a typo, romanization variant, or alternate release name?
+4. Does the track listing suggest this is a compilation, greatest hits, or live album?
+
+Respond ONLY with valid JSON in this exact format (no markdown, no explanations):
+{
+  "isValid": true/false,
+  "suggested": "Suggested Album Name (or original if valid)",
+  "confidence": 0-100,
+  "reasoning": "Brief explanation of your analysis",
+  "albumType": "studio/compilation/live/single/unknown"
+}
+
+Examples:
+- If albumName is "Unknown Album" and tracks are from "Abbey Road" → suggest "Abbey Road"
+- If albumName is partial match → suggest full correct name
+- If tracks don't match a single album → suggest it's a compilation
+- If albumName seems correct → suggested: same as original, isValid: true`;
+
+    try {
+        const result = await callClaudeCLI(prompt, 90000); // 90s timeout for AI album matching
+        const parsed = JSON.parse(result);
+
+        // Validate response structure
+        if (typeof parsed.isValid !== 'boolean' || !parsed.suggested || typeof parsed.confidence !== 'number') {
+            throw new Error('Invalid AI response structure');
+        }
+
+        console.log(`[AI Engine] AI album match: "${albumName}" → "${parsed.suggested}" (${parsed.confidence}% confidence)`);
+        console.log(`[AI Engine] Reasoning: ${parsed.reasoning}`);
+
+        return parsed;
+
+    } catch (error) {
+        console.error(`[AI Engine] AI album matching failed: ${error.message}`);
+        // Return original album with low confidence
+        return {
+            isValid: false,
+            suggested: albumName,
+            confidence: 0,
+            reasoning: `AI matching failed: ${error.message}`,
+            albumType: 'unknown'
+        };
+    }
+}
+
+/**
+ * Custom Claude query for user-provided prompts
+ * Used by the "Ask Claude" button to get custom AI analysis
+ *
+ * @param {string} entityType - 'artist' or 'album'
+ * @param {string} entityName - Original artist/album name
+ * @param {string} userPrompt - Custom user question/hint
+ * @param {Array} files - Associated audio files
+ * @returns {Promise<{success: boolean, response: string, suggested?: string}>}
+ */
+export async function askClaudeCustom(entityType, entityName, userPrompt, files = []) {
+    console.log(`[AI Engine] Custom Claude query for ${entityType}: "${entityName}"`);
+    console.log(`[AI Engine] User prompt: "${userPrompt}"`);
+
+    // Build context from file metadata
+    let context = '';
+    if (files.length > 0) {
+        const tracks = files.slice(0, 5).map(f => {
+            const parts = [];
+            if (f.metadata?.title) parts.push(`Title: ${f.metadata.title}`);
+            if (f.metadata?.album) parts.push(`Album: ${f.metadata.album}`);
+            if (f.metadata?.artist) parts.push(`Artist: ${f.metadata.artist}`);
+            return parts.length > 0 ? parts.join(', ') : f.fileName;
+        });
+
+        context = `\nSample tracks:\n${tracks.map((t, i) => `${i + 1}. ${t}`).join('\n')}`;
+    }
+
+    const prompt = `You are helping organize a music library. The user has a ${entityType} named "${entityName}" that couldn't be matched in MusicBrainz database.
+
+${context}
+
+User's question/hint: ${userPrompt}
+
+Please provide:
+1. Your analysis
+2. If applicable, a suggested corrected name for the ${entityType}
+
+Respond in JSON format:
+{
+    "analysis": "your detailed analysis here",
+    "suggested": "corrected name if you can identify it, or null if you need more info",
+    "confidence": 0-100
+}`;
+
+    try {
+        const response = await callClaudeCLI(prompt, 60000); // 60 second timeout for custom queries
+        const parsed = JSON.parse(response);
+
+        return {
+            success: true,
+            analysis: parsed.analysis,
+            suggested: parsed.suggested || null,
+            confidence: parsed.confidence || 0
+        };
+    } catch (error) {
+        console.error(`[AI Engine] Custom query failed: ${error.message}`);
+        return {
+            success: false,
+            analysis: `Failed to get Claude response: ${error.message}`,
+            suggested: null
+        };
+    }
+}
+
 export default {
     parseArtistWithAI,
     parseAlbumWithAI,
     parseTrackWithAI,
-    isClaudeCLIAvailable
+    isClaudeCLIAvailable,
+    matchArtistWithAI,
+    matchAlbumWithAI,
+    askClaudeCustom
 };
